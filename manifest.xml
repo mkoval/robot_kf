@@ -5,6 +5,7 @@
     <author>Michael Koval</author>
     <license>BSD</license>
     <url>https://github.com/mkoval/robot_kf</url>
+    <depend package="eigen"/>
     <depend package="geometry_msgs"/>
     <depend package="nav_msgs"/>
     <depend package="roscpp"/>

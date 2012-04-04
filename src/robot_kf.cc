@@ -1,4 +1,5 @@
 #include <cmath>
+#include <Eigen/Core>
 #include <Eigen/Dense>
 #include <Eigen/LU>
 
@@ -6,114 +7,92 @@ using namespace Eigen;
 
 namespace robot_kf {
 
-template <typename T, int n>
 class KalmanFilter {
 public:
     KalmanFilter(void)
-        : x_ = Vector3d::zeros()
-        , sigma_ = Matrix3d::zeros()
+        : x_(Vector3d::Zero())
+        , cov_x_(Matrix3d::Zero())
+        , A_(Matrix3d::Identity())
+        , B_(Matrix3d::Identity())
+        , Hgps_((Matrix<double, 2, 3>() << 1, 0, 0, 0, 1, 0).finished())
+        , Hcomp_((Matrix<double, 1, 3>() << 0, 0, 1).finished())
+        , encoders_prev_(x_)
     {}
 
     virtual ~KalmanFilter(void)
     {}
 
-    template <int un>
-    virtual void predict(Vector<T, un> u, Matrix<T, un, un> cov_u,
-                         Matrix<T, n, n> A, Matrix<T, n, m> B)
-    {
-        x_ = A * x_ + B * u;
-        cov_ = A * cov_x_ * A.transpose() + cov_u;
-    }
-
-    template <int zn>
-    virtual void measure(Vector<T, zn> z, Matrix<T, zn, zn> cov_z,
-                         Matrix<T, zn, n> H)
-    {
-        Matrix<double, n, zn> const K = cov_x_ * H.transpose() * (H * cov_x_
-                                      * H.transpose() + cov_z).inverse();
-        x_ = x_ + K * (z - H * x_);
-        cov_x_ = (Matrix3d::identity() - K * H) * cov_x_;
-    }
-
-    virtual Vector<T, n> getState(void) const
+    Vector3d getState(void) const
     {
         return x_;
     }
 
-    virtual Matrix<T, n, n> getCovariance(void) const
+    Matrix3d getCovariance(void) const
     {
         return cov_x_;
     }
 
-private:
-    Vector<T, n> x_;
-    Matrix<T, n, n> cov_x_;
-};
-
-template <typename T>
-class PositionKalmanFilter : public KalmanFilter<T, 3>
-{
-public:
-    PositionKalmanFilter(void)
-        : KalmanFilter()
-        , A_ = Matrix<T, 3, 3>::identity()
-        , B_ = (Matrix<T, 3, 6>() << -Matrix<T, 3, 3>::identity(),
-                                      Matrix<T, 3, 3>::identity())
-        , Hgps_ = (Matrix<T, 3, 2>() << 1, 0, 0, 0, 1, 0)
-        , Hcomp_ = (Matrix<T, 3, 1>() << 0, 0, 1)
-        , encoders_prev_ = x_
-    {}
-
-    virtual ~PositionKalmanFilter(void)
-    {}
-
-    template <int un>
-    virtual void predict(Vector<T, un> u, Matrix<T, un, un> cov_u,
-                         Matrix<T, 3, 3> A, Matrix<T, 3, un> B)
+    template <int m>
+    void predict(Matrix<double, m, 1> u, Matrix<double, m, m> cov_u,
+                 Matrix3d A, Matrix<double, 3, m> B)
     {
-        KalmanFilter::predict<un>(u, cov_u, A, B);
-        renormalize();
+#if 0
+        x_ = A * x_ + B * u;
+        cov_x_ = A * cov_x_ * A.transpose() + cov_u;
+#endif
     }
 
     template <int zn>
-    virtual void measure(Vector<T, zn> z, Matrix<T, zn, zn> cov_z,
-                         Matrix<T, zn, 3> H)
+    void measure(Matrix<double, zn, 1> z, Matrix<double, zn, zn> cov_z,
+                 Matrix<double, zn, 3> H)
     {
-        KalmanFilter::measure<zn>(z, cov_z, H);
-        renormalize();
+#if 0
+        Matrix<double, 3, zn> const K = cov_x_ * H.transpose() * (H * cov_x_
+                                      * H.transpose() + cov_z).inverse();
+        x_ = x_ + K * (z - H * x_);
+        cov_x_ = (Matrix3d::Identity() - K * H) * cov_x_;
+#endif
     }
 
-    virtual void update_encoders(Vector<T, 3> encoders_curr, Matrix<T, 3, 3> cov_enc)
+    void update_encoders(Vector3d encoders_curr, Matrix3d cov_enc)
     {
-        Vector<T, 6> const u = (Vector<T, 6> << encoders_prev, encoders_curr);
-        predict(u, cov_enc, A_, B_);
+        Vector3d const delta = encoders_curr - encoders_prev_;
+        predict(delta, cov_enc, A_, B_);
         encoders_prev_ = encoders_curr;
+        normalize_yaw();
     }
 
-    virtual void update_gps(Vector<T, 2> gps, Matrix<T, 2, 2> cov_gps)
+    void update_gps(Vector2d gps, Matrix2d cov_gps)
     {
         measure(gps, cov_gps, Hgps_);
     }
 
-    virtual void update_compass(double compass, cov_compass)
+    void update_compass(double compass, double cov_compass)
     {
-        measure(compass, cov_compass, Hcomp_);
+        Matrix<double, 1, 1> mat_compass, mat_cov_compass;
+        mat_compass << compass;
+        mat_cov_compass << cov_compass;
+
+        measure(mat_compass, mat_cov_compass, Hcomp_);
+        normalize_yaw();
     }
 
 private:
-    Matrix<double, 3, 3> const A_;
-    Matrix<double, 3, 6> const B_;
+    Vector3d x_;
+    Matrix3d cov_x_;
+    Matrix3d const A_, B_;
     Matrix<double, 2, 3> const Hgps_;
     Matrix<double, 1, 3> const Hcomp_;
-    Matrix3f encoders_prev_;
+    Vector3d encoders_prev_;
 
-    void renormalize(void) {
+    void normalize_yaw(void) {
         x_[2] = fmod(x_[2], 2 * M_PI);
     }
 };
 
+};
+
 int main(void)
 {
+    return 0;
 }
-
-};

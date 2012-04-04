@@ -36,22 +36,18 @@ public:
     void predict(Matrix<double, m, 1> u, Matrix<double, m, m> cov_u,
                  Matrix3d A, Matrix<double, 3, m> B)
     {
-#if 0
         x_ = A * x_ + B * u;
         cov_x_ = A * cov_x_ * A.transpose() + cov_u;
-#endif
     }
 
-    template <int zn>
-    void measure(Matrix<double, zn, 1> z, Matrix<double, zn, zn> cov_z,
-                 Matrix<double, zn, 3> H)
+    template <int m>
+    void measure(Matrix<double, m, 1> z, Matrix<double, m, m> cov_z,
+                 Matrix<double, m, 3> H)
     {
-#if 0
-        Matrix<double, 3, zn> const K = cov_x_ * H.transpose() * (H * cov_x_
+        Matrix<double, 3, m> const K = cov_x_ * H.transpose() * (H * cov_x_
                                       * H.transpose() + cov_z).inverse();
         x_ = x_ + K * (z - H * x_);
         cov_x_ = (Matrix3d::Identity() - K * H) * cov_x_;
-#endif
     }
 
     void update_encoders(Vector3d encoders_curr, Matrix3d cov_enc)

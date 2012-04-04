@@ -17,6 +17,9 @@ set(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/lib)
 #rosbuild_genmsg()
 #rosbuild_gensrv()
 
+rosbuild_add_library(robot_kf src/robot_kf.cc)
 rosbuild_add_executable(robot_kf_node
-    src/robot_kf.cc
+    src/robot_kf_node.cc
 )
+
+target_link_libraries(robot_kf_node robot_kf)

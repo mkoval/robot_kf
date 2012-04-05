@@ -7,7 +7,7 @@
 #include <sensor_msgs/Imu.h>
 #include <robot_kf/robot_kf.h>
 
-static tf::TransformListener sub_tf;
+static boost::shared_ptr<tf::TransformListener> sub_tf;
 static ros::Subscriber sub_compass;
 static ros::Subscriber sub_encoders;
 static ros::Subscriber sub_gps;
@@ -30,7 +30,7 @@ static void updateCompass(sensor_msgs::Imu const &msg)
     geometry_msgs::QuaternionStamped q_src, q_dst;
     q_src.header = msg.header;
     q_src.quaternion = msg.orientation;
-    sub_tf.transformQuaternion(frame_id, q_src, q_dst);
+    sub_tf->transformQuaternion(frame_id, q_src, q_dst);
 
     double const yaw = tf::getYaw(q_dst.quaternion);
     double const cov = msg.orientation_covariance[8];
@@ -45,7 +45,7 @@ static void updateEncoders(nav_msgs::Odometry const &msg)
     geometry_msgs::PoseStamped p_src, p_dst;
     p_src.header = msg.header;
     p_src.pose = msg.pose.pose;
-    sub_tf.transformPose(frame_id, p_src, p_dst);
+    sub_tf->transformPose(frame_id, p_src, p_dst);
 
     Eigen::Vector3d const z = (Eigen::Vector3d() <<
         p_src.pose.position.x,
@@ -72,7 +72,7 @@ static void updateGps(nav_msgs::Odometry const &msg)
     geometry_msgs::PoseStamped p_src, p_dst;
     p_src.header = msg.header;
     p_src.pose = msg.pose.pose;
-    sub_tf.transformPose(frame_id, p_src, p_dst);
+    sub_tf->transformPose(frame_id, p_src, p_dst);
 
     Eigen::Vector2d const z = (Eigen::Vector2d() <<
         p_dst.pose.position.x,
@@ -98,6 +98,7 @@ int main(int argc, char **argv)
     nh.param<bool>("watch_gps",      watch_gps,      true);
     nh.param<std::string>("frame_id", frame_id, "/odom_fused");
 
+    sub_tf = boost::make_shared<tf::TransformListener>();
     sub_compass  = nh.subscribe("compass", 1, &updateCompass);
     sub_encoders = nh.subscribe("odom", 1, &updateEncoders);
     sub_gps      = nh.subscribe("gps", 1, &updateGps);

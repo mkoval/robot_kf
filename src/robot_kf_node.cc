@@ -57,12 +57,12 @@ static void updateEncoders(nav_msgs::Odometry const &msg)
         &msg.pose.covariance.front()
     );
 
-    Eigen::Matrix3d cov_z;
+    Eigen::Matrix3d cov_z = Eigen::Matrix3d::Zero();
     cov_z.topLeftCorner<2, 2>() = cov_raw.topLeftCorner<2, 2>();
     cov_z(2, 2) = cov_raw(5, 5);
 
     // TODO: Why does this line cause a compile-time error?
-    //kf.update_encoders(z, cov_z);
+    kf.update_encoders(z, cov_z);
     if (watch_encoders) publish();
 }
 

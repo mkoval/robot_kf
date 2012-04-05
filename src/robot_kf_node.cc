@@ -57,6 +57,19 @@ static void updateEncoders(nav_msgs::Odometry const &msg)
 static void updateGps(nav_msgs::Odometry const &msg)
 {
     // TODO: TF frame conversion
+
+    Eigen::Vector2d const z = (Eigen::Vector2d() <<
+        msg.pose.pose.position.x,
+        msg.pose.pose.position.y
+    ).finished();
+
+    Eigen::Map<Eigen::Matrix<double, 6, 6> const> cov_raw(
+        &msg.pose.covariance.front()
+    );
+    Eigen::Matrix2d const cov_z = cov_raw.topLeftCorner<2, 2>();
+
+    kf.update_gps(z, cov_z);
+    if (watch_gps) publish();
 }
 
 int main(int argc, char **argv)

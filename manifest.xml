@@ -7,8 +7,10 @@
     <url>https://github.com/mkoval/robot_kf</url>
     <depend package="eigen"/>
     <depend package="geometry_msgs"/>
-    <depend package="nav_msgs"/>
     <depend package="roscpp"/>
+    <depend package="nav_msgs"/>
+    <depend package="sensor_msgs"/>
+    <depend package="tf"/>
     <export>
         <cpp cflags="-I${prefix}/include" lflags="-L${prefix}/lib -lkalman_kf"/>
     </export>

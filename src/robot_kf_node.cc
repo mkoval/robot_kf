@@ -7,6 +7,8 @@
 #include <sensor_msgs/Imu.h>
 #include <robot_kf/robot_kf.h>
 
+// TODO: Deal with TF frames.
+
 static boost::shared_ptr<tf::TransformListener> sub_tf;
 static ros::Subscriber sub_compass;
 static ros::Subscriber sub_encoders;
@@ -26,13 +28,7 @@ static void publish(void)
 
 static void updateCompass(sensor_msgs::Imu const &msg)
 {
-    // FIXME: Also transform the covariance matrix.
-    geometry_msgs::QuaternionStamped q_src, q_dst;
-    q_src.header = msg.header;
-    q_src.quaternion = msg.orientation;
-    sub_tf->transformQuaternion(frame_id, q_src, q_dst);
-
-    double const yaw = tf::getYaw(q_dst.quaternion);
+    double const yaw = tf::getYaw(msg.orientation);
     double const cov = msg.orientation_covariance[8];
 
     kf.update_compass(yaw, cov);
@@ -41,15 +37,9 @@ static void updateCompass(sensor_msgs::Imu const &msg)
 
 static void updateEncoders(nav_msgs::Odometry const &msg)
 {
-    // FIXME: Also transform the covariance matrix.
-    geometry_msgs::PoseStamped p_src, p_dst;
-    p_src.header = msg.header;
-    p_src.pose = msg.pose.pose;
-    sub_tf->transformPose(frame_id, p_src, p_dst);
-
     Eigen::Vector3d const z = (Eigen::Vector3d() <<
-        p_src.pose.position.x,
-        p_src.pose.position.y,
+        msg.pose.pose.position.x,
+        msg.pose.pose.position.y,
         tf::getYaw(msg.pose.pose.orientation)
     ).finished();
 
@@ -61,22 +51,15 @@ static void updateEncoders(nav_msgs::Odometry const &msg)
     cov_z.topLeftCorner<2, 2>() = cov_raw.topLeftCorner<2, 2>();
     cov_z(2, 2) = cov_raw(5, 5);
 
-    // TODO: Why does this line cause a compile-time error?
     kf.update_encoders(z, cov_z);
     if (watch_encoders) publish();
 }
 
 static void updateGps(nav_msgs::Odometry const &msg)
 {
-    // FIXME: Also transform the covariance matrix.
-    geometry_msgs::PoseStamped p_src, p_dst;
-    p_src.header = msg.header;
-    p_src.pose = msg.pose.pose;
-    sub_tf->transformPose(frame_id, p_src, p_dst);
-
     Eigen::Vector2d const z = (Eigen::Vector2d() <<
-        p_dst.pose.position.x,
-        p_dst.pose.position.y
+        msg.pose.pose.position.x,
+        msg.pose.pose.position.y
     ).finished();
 
     Eigen::Map<Eigen::Matrix<double, 6, 6> const> cov_raw(

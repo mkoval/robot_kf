@@ -97,12 +97,12 @@ int main(int argc, char **argv)
 {
     ros::init(argc, argv, "robot_kf_node");
 
-    ros::NodeHandle nh;
-    nh.param<bool>("watch_compass",  watch_compass,  true);
-    nh.param<bool>("watch_encoders", watch_encoders, true);
-    nh.param<bool>("watch_gps",      watch_gps,      true);
-    nh.param<std::string>("frame_id", frame_id, "/map");
-    nh.param<std::string>("child_frame_id", child_frame_id, "/odom");
+    ros::NodeHandle nh, nh_node("~");
+    nh_node.param<bool>("watch_compass",  watch_compass,  true);
+    nh_node.param<bool>("watch_encoders", watch_encoders, true);
+    nh_node.param<bool>("watch_gps",      watch_gps,      true);
+    nh_node.param<std::string>("frame_id", frame_id, "/map");
+    nh_node.param<std::string>("child_frame_id", child_frame_id, "/odom");
 
     sub_tf = boost::make_shared<tf::TransformListener>();
     sub_compass  = nh.subscribe("compass", 1, &updateCompass);

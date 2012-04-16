@@ -9,21 +9,43 @@
 
 // TODO: Deal with TF frames.
 
+static double const big = 99999.0;
+
 static boost::shared_ptr<tf::TransformListener> sub_tf;
 static ros::Subscriber sub_compass;
 static ros::Subscriber sub_encoders;
 static ros::Subscriber sub_gps;
 static ros::Publisher  pub_fused;
 static robot_kf::KalmanFilter kf;
-static std::string frame;
 
 static bool watch_compass;
 static bool watch_encoders;
 static bool watch_gps;
-static std::string frame_id;
+static std::string frame_id, child_frame_id;
 
 static void publish(void)
 {
+    Eigen::Vector3d const state = kf.getState();
+    Eigen::Matrix3d const cov = kf.getCovariance();
+
+    nav_msgs::Odometry msg;
+    msg.header.stamp = ros::Time::now();
+    msg.header.frame_id = frame_id;
+    msg.child_frame_id = child_frame_id;
+    msg.pose.pose.position.x = state[0];
+    msg.pose.pose.position.y = state[1];
+    tf::quaternionTFToMsg(tf::createQuaternionFromYaw(state[2]),
+                          msg.pose.pose.orientation);
+
+    Eigen::Map<Eigen::Matrix<double, 6, 6> > cov_raw(&msg.pose.covariance[0]);
+    cov_raw << cov(0,0), cov(0,1), 0.0, 0.0, 0.0, cov(0,2),
+               cov(1,0), cov(1,1), 0.0, 0.0, 0.0, cov(1,2),
+               0.0,      0.0,      big, 0.0, 0.0, 0.0,
+               0.0,      0.0,      0.0, big, 0.0, 0.0,
+               0.0,      0.0,      0.0, 0.0, big, 0.0,
+               cov(2,0), cov(2,1), 0.0, 0.0, 0.0, cov(2,2);
+    msg.twist.covariance[0] = -1;
+    pub_fused.publish(msg);
 }
 
 static void updateCompass(sensor_msgs::Imu const &msg)
@@ -79,7 +101,8 @@ int main(int argc, char **argv)
     nh.param<bool>("watch_compass",  watch_compass,  true);
     nh.param<bool>("watch_encoders", watch_encoders, true);
     nh.param<bool>("watch_gps",      watch_gps,      true);
-    nh.param<std::string>("frame_id", frame_id, "/odom_fused");
+    nh.param<std::string>("frame_id", frame_id, "/map");
+    nh.param<std::string>("child_frame_id", child_frame_id, "/odom");
 
     sub_tf = boost::make_shared<tf::TransformListener>();
     sub_compass  = nh.subscribe("compass", 1, &updateCompass);

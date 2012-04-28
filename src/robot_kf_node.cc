@@ -1,6 +1,7 @@
 #include <Eigen/Geometry>
 #include <ros/ros.h>
 #include <tf/transform_datatypes.h>
+#include <tf/transform_broadcaster.h>
 #include <tf/transform_listener.h>
 #include <geometry_msgs/QuaternionStamped.h>
 #include <nav_msgs/Odometry.h>
@@ -11,7 +12,9 @@
 
 static double const big = 99999.0;
 
-static boost::shared_ptr<tf::TransformListener> sub_tf;
+static boost::shared_ptr<tf::TransformListener>    sub_tf;
+static boost::shared_ptr<tf::TransformBroadcaster> pub_tf;
+
 static ros::Subscriber sub_compass;
 static ros::Subscriber sub_encoders;
 static ros::Subscriber sub_gps;
@@ -23,11 +26,12 @@ static bool watch_encoders;
 static bool watch_gps;
 static std::string frame_id, child_frame_id;
 
-static void publish(void)
+static void publish(ros::Time stamp)
 {
     Eigen::Vector3d const state = kf.getState();
     Eigen::Matrix3d const cov = kf.getCovariance();
 
+    // Publish the odometry message.
     nav_msgs::Odometry msg;
     msg.header.stamp = ros::Time::now();
     msg.header.frame_id = frame_id;
@@ -46,6 +50,18 @@ static void publish(void)
                cov(2,0), cov(2,1), 0.0, 0.0, 0.0, cov(2,2);
     msg.twist.covariance[0] = -1;
     pub_fused.publish(msg);
+
+    // Publish a TF transform for the fused odometry.
+    geometry_msgs::TransformStamped transform;
+    transform.header.stamp    = stamp;
+    transform.header.frame_id = frame_id;
+    transform.child_frame_id  = child_frame_id;
+    transform.transform.translation.x = state[0];
+    transform.transform.translation.y = state[1];
+    transform.transform.translation.z = 0.0;
+    tf::quaternionTFToMsg(tf::createQuaternionFromYaw(state[2]),
+                          transform.transform.rotation);
+    pub_tf->sendTransform(transform);
 }
 
 static void updateCompass(sensor_msgs::Imu const &msg)
@@ -54,7 +70,7 @@ static void updateCompass(sensor_msgs::Imu const &msg)
     double const cov = msg.orientation_covariance[8];
 
     kf.update_compass(yaw, cov);
-    if (watch_compass) publish();
+    if (watch_compass) publish(msg.header.stamp);
 }
 
 static void updateEncoders(nav_msgs::Odometry const &msg)
@@ -74,7 +90,7 @@ static void updateEncoders(nav_msgs::Odometry const &msg)
     cov_z(2, 2) = cov_raw(5, 5);
 
     kf.update_encoders(z, cov_z);
-    if (watch_encoders) publish();
+    if (watch_encoders) publish(msg.header.stamp);
 }
 
 static void updateGps(nav_msgs::Odometry const &msg)
@@ -90,7 +106,7 @@ static void updateGps(nav_msgs::Odometry const &msg)
     Eigen::Matrix2d const cov_z = cov_raw.topLeftCorner<2, 2>();
 
     kf.update_gps(z, cov_z);
-    if (watch_gps) publish();
+    if (watch_gps) publish(msg.header.stamp);
 }
 
 int main(int argc, char **argv)
@@ -105,6 +121,8 @@ int main(int argc, char **argv)
     nh_node.param<std::string>("child_frame_id", child_frame_id, "/odom");
 
     sub_tf = boost::make_shared<tf::TransformListener>();
+    pub_tf = boost::make_shared<tf::TransformBroadcaster>();
+
     sub_compass  = nh.subscribe("compass", 1, &updateCompass);
     sub_encoders = nh.subscribe("odom", 1, &updateEncoders);
     sub_gps      = nh.subscribe("gps", 1, &updateGps);

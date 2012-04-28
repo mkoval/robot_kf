@@ -17,6 +17,9 @@ set(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/lib)
 #rosbuild_genmsg()
 #rosbuild_gensrv()
 
+find_package(Eigen REQUIRED)
+include_directories(${Eigen_INCLUDE_DIRS})
+
 rosbuild_add_library(robot_kf src/robot_kf.cc)
 rosbuild_add_executable(robot_kf_node
     src/robot_kf_node.cc

@@ -3,6 +3,7 @@
 #include <tf/transform_datatypes.h>
 #include <tf/transform_broadcaster.h>
 #include <tf/transform_listener.h>
+#include <tf/transform_broadcaster.h>
 #include <geometry_msgs/QuaternionStamped.h>
 #include <nav_msgs/Odometry.h>
 #include <sensor_msgs/Imu.h>
@@ -12,9 +13,8 @@
 
 static double const big = 99999.0;
 
-static boost::shared_ptr<tf::TransformListener>    sub_tf;
+static boost::shared_ptr<tf::TransformListener> sub_tf;
 static boost::shared_ptr<tf::TransformBroadcaster> pub_tf;
-
 static ros::Subscriber sub_compass;
 static ros::Subscriber sub_encoders;
 static ros::Subscriber sub_gps;
@@ -33,7 +33,7 @@ static void publish(ros::Time stamp)
 
     // Publish the odometry message.
     nav_msgs::Odometry msg;
-    msg.header.stamp = ros::Time::now();
+    msg.header.stamp = stamp;
     msg.header.frame_id = frame_id;
     msg.child_frame_id = child_frame_id;
     msg.pose.pose.position.x = state[0];
@@ -51,14 +51,15 @@ static void publish(ros::Time stamp)
     msg.twist.covariance[0] = -1;
     pub_fused.publish(msg);
 
-    // Publish a TF transform for the fused odometry.
+    // Transformation.
+    // TODO: Follow the localization REP and publish the /map to /odom
+    // transform instead of the /map to /base_link transform.
     geometry_msgs::TransformStamped transform;
-    transform.header.stamp    = stamp;
+    transform.header.stamp = stamp;
     transform.header.frame_id = frame_id;
-    transform.child_frame_id  = child_frame_id;
+    transform.child_frame_id = child_frame_id;
     transform.transform.translation.x = state[0];
     transform.transform.translation.y = state[1];
-    transform.transform.translation.z = 0.0;
     tf::quaternionTFToMsg(tf::createQuaternionFromYaw(state[2]),
                           transform.transform.rotation);
     pub_tf->sendTransform(transform);
@@ -122,7 +123,6 @@ int main(int argc, char **argv)
 
     sub_tf = boost::make_shared<tf::TransformListener>();
     pub_tf = boost::make_shared<tf::TransformBroadcaster>();
-
     sub_compass  = nh.subscribe("compass", 1, &updateCompass);
     sub_encoders = nh.subscribe("odom", 1, &updateEncoders);
     sub_gps      = nh.subscribe("gps", 1, &updateGps);

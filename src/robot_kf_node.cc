@@ -10,17 +10,15 @@
 #include <sensor_msgs/Imu.h>
 #include <robot_kf/robot_kf.h>
 
-// TODO: Deal with TF frames.
-
 static double const big = 99999.0;
 
 static boost::shared_ptr<tf::TransformListener> sub_tf;
 static boost::shared_ptr<tf::TransformBroadcaster> pub_tf;
-static ros::Subscriber sub_compass;
-static ros::Subscriber sub_encoders;
-static ros::Subscriber sub_gps;
-static ros::Publisher  pub_fused;
+static ros::Subscriber sub_compass, sub_encoders, sub_gps;
+static ros::Publisher pub_fused;
+
 static robot_kf::KalmanFilter kf;
+static geometry_msgs::Twist velocity;
 
 static bool watch_compass, watch_encoders, watch_gps;
 static std::string global_frame_id, odom_frame_id, base_frame_id;
@@ -52,9 +50,8 @@ static void publish(ros::Time stamp)
     msg.child_frame_id = odom_frame_id;
     msg.pose.pose = fused_odom.pose;
     msg.pose.covariance[0] = -1;
+    msg.twist.twist = velocity;
     msg.twist.covariance[0] = -1;
-
-    // TODO: Include velocity for the DWA planner.
     pub_fused.publish(msg);
 
 
@@ -119,6 +116,10 @@ static void updateEncoders(nav_msgs::Odometry const &msg)
     Eigen::Matrix3d cov_z = Eigen::Matrix3d::Zero();
     cov_z.topLeftCorner<2, 2>() = cov_raw.topLeftCorner<2, 2>();
     cov_z(2, 2) = cov_raw(5, 5);
+
+    // Save the current velocity to republish later. This is necessary because
+    // no other sensors measure velocity.
+    velocity = msg.twist.twist;
 
     kf.update_encoders(z, cov_z);
     if (watch_encoders) publish(msg.header.stamp);

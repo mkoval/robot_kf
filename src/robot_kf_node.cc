@@ -69,28 +69,32 @@ static void publish(ros::Time stamp)
 
 static void updateCompass(sensor_msgs::Imu const &msg)
 {
-    ros::Time const stamp = msg.header.stamp;
-    std::string const frame_id = msg.header.frame_id;
+    try {
+        ros::Time const stamp = msg.header.stamp;
+        std::string const frame_id = msg.header.frame_id;
 
-    // Transform the orientation into the base coordinate frame.
-    geometry_msgs::QuaternionStamped stamped_in, stamped_out;
-    stamped_in.header.frame_id = frame_id;
-    stamped_in.header.stamp    = stamp;
-    stamped_in.quaternion = msg.orientation;
-    sub_tf->transformQuaternion(base_frame_id, stamped_in, stamped_out);
+        // Transform the orientation into the base coordinate frame.
+        geometry_msgs::QuaternionStamped stamped_in, stamped_out;
+        stamped_in.header.frame_id = frame_id;
+        stamped_in.header.stamp    = stamp;
+        stamped_in.quaternion = msg.orientation;
+        sub_tf->transformQuaternion(base_frame_id, stamped_in, stamped_out);
 
-    // Rotate the covariance matrix according to the transformation.
-    tf::StampedTransform transform;
-    Eigen::Affine3d eigen_transform;
-    sub_tf->lookupTransform(base_frame_id, frame_id, stamp, transform);
-    tf::TransformTFToEigen(transform, eigen_transform);
+        // Rotate the covariance matrix according to the transformation.
+        tf::StampedTransform transform;
+        Eigen::Affine3d eigen_transform;
+        sub_tf->lookupTransform(base_frame_id, frame_id, stamp, transform);
+        tf::TransformTFToEigen(transform, eigen_transform);
 
-    Eigen::Matrix3d const rotation = eigen_transform.rotation();
-    Eigen::Map<Eigen::Matrix3d const> cov_raw(&msg.orientation_covariance.front());
-    Eigen::Matrix3d const cov = rotation.transpose() * cov_raw * rotation;
+        Eigen::Matrix3d const rotation = eigen_transform.rotation();
+        Eigen::Map<Eigen::Matrix3d const> cov_raw(&msg.orientation_covariance.front());
+        Eigen::Matrix3d const cov = rotation.transpose() * cov_raw * rotation;
 
-    kf.update_compass(tf::getYaw(stamped_out.quaternion), cov(2, 2));
-    if (watch_compass) publish(stamp);
+        kf.update_compass(tf::getYaw(stamped_out.quaternion), cov(2, 2));
+        if (watch_compass) publish(stamp);
+    } catch (tf::ExtrapolationException const &e) {
+        ROS_WARN("%s", e.what());
+    }
 }
 
 static void updateEncoders(nav_msgs::Odometry const &msg)
@@ -176,7 +180,7 @@ int main(int argc, char **argv)
 
     sub_tf = boost::make_shared<tf::TransformListener>();
     pub_tf = boost::make_shared<tf::TransformBroadcaster>();
-    //sub_compass  = nh.subscribe("compass", 1, &updateCompass);
+    sub_compass  = nh.subscribe("compass", 1, &updateCompass);
     //sub_encoders = nh.subscribe("odom", 1, &updateEncoders);
     sub_gps      = nh.subscribe("gps", 1, &updateGps);
     pub_fused    = nh.advertise<nav_msgs::Odometry>("odom_fused", 100);

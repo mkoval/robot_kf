@@ -127,34 +127,39 @@ static void updateEncoders(nav_msgs::Odometry const &msg)
 
 static void updateGps(nav_msgs::Odometry const &msg)
 {
-    ros::Time const stamp = msg.header.stamp;
-    std::string const frame_id = msg.header.frame_id;
+    try {
+        ros::Time const stamp = msg.header.stamp;
+        std::string const frame_id = msg.child_frame_id;
 
-    // Transform the position into the base coordinate frame.
-    geometry_msgs::PointStamped stamped_in, stamped_out;
-    stamped_in.header = msg.header;
-    stamped_in.point = msg.pose.pose.position;
-    sub_tf->transformPoint(base_frame_id, stamped_in, stamped_out);
+        // Transform the position into the base coordinate frame.
+        geometry_msgs::PointStamped stamped_in, stamped_out;
+        stamped_in.header.stamp = stamp;
+        stamped_in.header.frame_id = frame_id;
+        stamped_in.point = msg.pose.pose.position;
+        sub_tf->transformPoint(base_frame_id, stamped_in, stamped_out);
 
-    Eigen::Vector2d const z = (Eigen::Vector2d() <<
-        stamped_out.point.x, stamped_out.point.y).finished();
-    Eigen::Map<Eigen::Matrix<double, 6, 6> const> cov_raw(
-        &msg.pose.covariance.front()
-    );
-    Eigen::Matrix3d const cov3_raw = cov_raw.topLeftCorner<3, 3>();
+        Eigen::Vector2d const z = (Eigen::Vector2d() <<
+            stamped_out.point.x, stamped_out.point.y).finished();
+        Eigen::Map<Eigen::Matrix<double, 6, 6> const> cov_raw(
+            &msg.pose.covariance.front()
+        );
+        Eigen::Matrix3d const cov3_raw = cov_raw.topLeftCorner<3, 3>();
 
-    // Rotate the covariance matrix according to the transformation.
-    tf::StampedTransform transform;
-    Eigen::Affine3d eigen_transform;
-    sub_tf->lookupTransform(base_frame_id, frame_id, stamp, transform);
-    tf::TransformTFToEigen(transform, eigen_transform);
+        // Rotate the covariance matrix according to the transformation.
+        tf::StampedTransform transform;
+        Eigen::Affine3d eigen_transform;
+        sub_tf->lookupTransform(base_frame_id, frame_id, stamp, transform);
+        tf::TransformTFToEigen(transform, eigen_transform);
 
-    Eigen::Matrix3d const rotation = eigen_transform.rotation();
-    Eigen::Matrix3d const cov3 = rotation.transpose() * cov3_raw * rotation;
-    Eigen::Matrix2d const cov  = cov3.topLeftCorner<2, 2>();
+        Eigen::Matrix3d const rotation = eigen_transform.rotation();
+        Eigen::Matrix3d const cov3 = rotation.transpose() * cov3_raw * rotation;
+        Eigen::Matrix2d const cov  = cov3.topLeftCorner<2, 2>();
 
-    kf.update_gps(z, cov);
-    if (watch_gps) publish(msg.header.stamp);
+        kf.update_gps(z, cov);
+        if (watch_gps) publish(msg.header.stamp);
+    } catch (tf::ExtrapolationException const &e) {
+        ROS_WARN("%s", e.what());
+    }
 }
 
 int main(int argc, char **argv)
@@ -166,13 +171,13 @@ int main(int argc, char **argv)
     nh_node.param<bool>("watch_encoders", watch_encoders, true);
     nh_node.param<bool>("watch_gps",      watch_gps,      true);
     nh_node.param<std::string>("global_frame_id", global_frame_id, "/map");
-    nh_node.param<std::string>("odom_frame_id", odom_frame_id, "/odom");
-    nh_node.param<std::string>("base_frame_id", base_frame_id, "/base_footprint");
+    nh_node.param<std::string>("odom_frame_id",   odom_frame_id,   "/odom");
+    nh_node.param<std::string>("base_frame_id",   base_frame_id,   "/base_footprint");
 
     sub_tf = boost::make_shared<tf::TransformListener>();
     pub_tf = boost::make_shared<tf::TransformBroadcaster>();
-    sub_compass  = nh.subscribe("compass", 1, &updateCompass);
-    sub_encoders = nh.subscribe("odom", 1, &updateEncoders);
+    //sub_compass  = nh.subscribe("compass", 1, &updateCompass);
+    //sub_encoders = nh.subscribe("odom", 1, &updateEncoders);
     sub_gps      = nh.subscribe("gps", 1, &updateGps);
     pub_fused    = nh.advertise<nav_msgs::Odometry>("odom_fused", 100);
 

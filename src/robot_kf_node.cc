@@ -94,15 +94,20 @@ static void updateCompass(sensor_msgs::Imu const &msg)
 
 static void updateEncoders(nav_msgs::Odometry const &msg)
 {
-    //
-
+    if (msg.header.frame_id != odom_frame_id
+     || msg.child_frame_id != base_frame_id) {
+        ROS_ERROR_THROTTLE(10,
+            "Odometry message must have a frame_id '%s' and child_frame_id '%s'",
+            odom_frame_id.c_str(), base_frame_id.c_str()
+        );
+        return;
+    }
 
     Eigen::Vector3d const z = (Eigen::Vector3d() <<
         msg.pose.pose.position.x,
         msg.pose.pose.position.y,
         tf::getYaw(msg.pose.pose.orientation)
     ).finished();
-
     Eigen::Map<Eigen::Matrix<double, 6, 6> const> cov_raw(
         &msg.pose.covariance.front()
     );

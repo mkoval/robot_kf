@@ -28,42 +28,46 @@ static std::string global_frame_id, odom_frame_id, base_frame_id;
 static void publish(ros::Time stamp)
 {
     Eigen::Vector3d const state = kf.getState();
-    Eigen::Matrix3d const cov = kf.getCovariance();
+    
+    // Wrap the fused state estimate in a ROS message.
+    geometry_msgs::PoseStamped fused_base;
+    fused_base.header.stamp    = stamp;
+    fused_base.header.frame_id = base_frame_id;
+    fused_base.pose.position.x = state[0];
+    fused_base.pose.position.y = state[1];
+    fused_base.pose.position.z = 0.0;
+    fused_base.pose.orientation = tf::createQuaternionMsgFromYaw(state[2]);
+
+    // We can't directly publish the transformation from global_frame_id to
+    // base_frame_id because it would create a cycle in the TF tree. Instead,
+    // we publish a transform from global_frame_id to odom_frame_id. This is
+    // equivalent to transforming from base_frame_id to odom_frame_id.
+    geometry_msgs::PoseStamped fused_odom;
+    sub_tf->transformPose(odom_frame_id, fused_base, fused_odom);
 
     // Publish the odometry message.
     nav_msgs::Odometry msg;
-    msg.header.stamp = msg.header.stamp;
-    msg.header.frame_id = msg.header.frame_id;
-    msg.child_frame_id = base_frame_id;
-    msg.pose.pose.position.x = state[0];
-    msg.pose.pose.position.y = state[1];
-    tf::quaternionTFToMsg(tf::createQuaternionFromYaw(state[2]),
-                          msg.pose.pose.orientation);
-
-    Eigen::Map<Eigen::Matrix<double, 6, 6> > cov_raw(&msg.pose.covariance[0]);
-    cov_raw << cov(0,0), cov(0,1), 0.0, 0.0, 0.0, cov(0,2),
-               cov(1,0), cov(1,1), 0.0, 0.0, 0.0, cov(1,2),
-               0.0,      0.0,      big, 0.0, 0.0, 0.0,
-               0.0,      0.0,      0.0, big, 0.0, 0.0,
-               0.0,      0.0,      0.0, 0.0, big, 0.0,
-               cov(2,0), cov(2,1), 0.0, 0.0, 0.0, cov(2,2);
+    msg.header.stamp = stamp;
+    msg.header.frame_id = global_frame_id;
+    msg.child_frame_id = odom_frame_id;
+    msg.pose.pose = fused_odom.pose;
+    msg.pose.covariance[0] = -1;
     msg.twist.covariance[0] = -1;
+
+    // TODO: Include velocity for the DWA planner.
     pub_fused.publish(msg);
 
+
     // Transformation.
-    // TODO: Follow the localization REP and publish the /map to /odom
-    // transform instead of the /map to /base_link transform.
-#if 0
     geometry_msgs::TransformStamped transform;
     transform.header.stamp = stamp;
-    transform.header.frame_id = frame_id;
-    transform.child_frame_id = child_frame_id;
-    transform.transform.translation.x = state[0];
-    transform.transform.translation.y = state[1];
-    tf::quaternionTFToMsg(tf::createQuaternionFromYaw(state[2]),
-                          transform.transform.rotation);
+    transform.header.frame_id = global_frame_id;
+    transform.child_frame_id = odom_frame_id;
+    transform.transform.translation.x = fused_odom.pose.position.x;
+    transform.transform.translation.y = fused_odom.pose.position.y;
+    transform.transform.translation.z = fused_odom.pose.position.z;
+    transform.transform.rotation = fused_odom.pose.orientation;
     pub_tf->sendTransform(transform);
-#endif
 }
 
 static void updateCompass(sensor_msgs::Imu const &msg)

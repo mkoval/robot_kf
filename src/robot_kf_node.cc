@@ -26,7 +26,9 @@ static std::string global_frame_id, odom_frame_id, base_frame_id;
 static void publish(ros::Time stamp)
 {
     Eigen::Vector3d const state = kf.getState();
-    
+
+    std::cout << "Fused: (" << state[0] << ", " << state[1] << ")" << std::endl;
+
     // Wrap the fused state estimate in a ROS message.
     geometry_msgs::PoseStamped fused_base;
     fused_base.header.stamp    = stamp;
@@ -43,6 +45,9 @@ static void publish(ros::Time stamp)
     geometry_msgs::PoseStamped fused_odom;
     sub_tf->transformPose(odom_frame_id, fused_base, fused_odom);
 
+    // DEBUG
+    fused_odom = fused_base;
+
     // Publish the odometry message.
     nav_msgs::Odometry msg;
     msg.header.stamp = stamp;
@@ -53,7 +58,6 @@ static void publish(ros::Time stamp)
     msg.twist.twist = velocity;
     msg.twist.covariance[0] = -1;
     pub_fused.publish(msg);
-
 
     // Transformation.
     geometry_msgs::TransformStamped transform;
@@ -159,7 +163,14 @@ static void updateGps(nav_msgs::Odometry const &msg)
         Eigen::Matrix3d const cov3 = rotation.transpose() * cov3_raw * rotation;
         Eigen::Matrix2d const cov  = cov3.topLeftCorner<2, 2>();
 
+
+        std::cout << "GPS: (" << z[0] << ", " << z[1] << "), "
+                  << "sigma = [" << cov(0, 0) << " " << cov(0, 1) << " ; "
+                                 << cov(1, 0) << " " << cov(1, 1) << " ]"
+                  << std::endl;
+
         kf.update_gps(z, cov);
+
         if (watch_gps) publish(msg.header.stamp);
     } catch (tf::ExtrapolationException const &e) {
         ROS_WARN("%s", e.what());
@@ -180,7 +191,7 @@ int main(int argc, char **argv)
 
     sub_tf = boost::make_shared<tf::TransformListener>();
     pub_tf = boost::make_shared<tf::TransformBroadcaster>();
-    sub_compass  = nh.subscribe("compass", 1, &updateCompass);
+    //sub_compass  = nh.subscribe("compass", 1, &updateCompass);
     //sub_encoders = nh.subscribe("odom", 1, &updateEncoders);
     sub_gps      = nh.subscribe("gps", 1, &updateGps);
     pub_fused    = nh.advertise<nav_msgs::Odometry>("odom_fused", 100);

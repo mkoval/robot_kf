@@ -10,7 +10,7 @@ namespace robot_kf {
 
 KalmanFilter::KalmanFilter(void)
     : x_(Vector3d::Zero())
-    , cov_x_(Matrix3d::Zero())
+    , cov_x_(9999 * Matrix3d::Identity())
     , A_(Matrix3d::Identity())
     , B_(Matrix3d::Identity())
     , Hgps_((Matrix<double, 2, 3>() << 1, 0, 0, 0, 1, 0).finished())

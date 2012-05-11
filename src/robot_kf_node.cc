@@ -89,7 +89,7 @@ static void updateCompass(sensor_msgs::Imu const &msg)
     Eigen::Matrix3d const cov = rotation.transpose() * cov_raw * rotation;
 
     kf.update_compass(tf::getYaw(stamped_out.quaternion), cov(2, 2));
-    //if (watch_compass) publish(msg.header.stamp);
+    if (watch_compass) publish(stamp);
 }
 
 static void updateEncoders(nav_msgs::Odometry const &msg)

@@ -32,7 +32,7 @@ static void publish(ros::Time stamp)
     // Wrap the fused state estimate in a ROS message.
     geometry_msgs::PoseStamped fused_base;
     fused_base.header.stamp    = stamp;
-    fused_base.header.frame_id = base_frame_id;
+    fused_base.header.frame_id = odom_frame_id;
     fused_base.pose.position.x = state[0];
     fused_base.pose.position.y = state[1];
     fused_base.pose.position.z = 0.0;
@@ -43,10 +43,10 @@ static void publish(ros::Time stamp)
     // we publish a transform from global_frame_id to odom_frame_id. This is
     // equivalent to transforming from base_frame_id to odom_frame_id.
     geometry_msgs::PoseStamped fused_odom;
-    sub_tf->transformPose(odom_frame_id, fused_base, fused_odom);
+    sub_tf->transformPose(base_frame_id, fused_base, fused_odom);
 
-    // DEBUG
-    fused_odom = fused_base;
+    // FIXME
+    //fused_odom = fused_base;
 
     // Publish the odometry message.
     nav_msgs::Odometry msg;
@@ -103,34 +103,38 @@ static void updateCompass(sensor_msgs::Imu const &msg)
 
 static void updateEncoders(nav_msgs::Odometry const &msg)
 {
-    if (msg.header.frame_id != odom_frame_id
-     || msg.child_frame_id != base_frame_id) {
-        ROS_ERROR_THROTTLE(10,
-            "Odometry message must have a frame_id '%s' and child_frame_id '%s'",
-            odom_frame_id.c_str(), base_frame_id.c_str()
+    try {
+        if (msg.header.frame_id != odom_frame_id
+         || msg.child_frame_id != base_frame_id) {
+            ROS_ERROR_THROTTLE(10,
+                "Odometry message must have a frame_id '%s' and child_frame_id '%s'",
+                odom_frame_id.c_str(), base_frame_id.c_str()
+            );
+            return;
+        }
+
+        Eigen::Vector3d const z = (Eigen::Vector3d() <<
+            msg.pose.pose.position.x,
+            msg.pose.pose.position.y,
+            tf::getYaw(msg.pose.pose.orientation)
+        ).finished();
+        Eigen::Map<Eigen::Matrix<double, 6, 6> const> cov_raw(
+            &msg.pose.covariance.front()
         );
-        return;
+
+        Eigen::Matrix3d cov_z = Eigen::Matrix3d::Zero();
+        cov_z.topLeftCorner<2, 2>() = cov_raw.topLeftCorner<2, 2>();
+        cov_z(2, 2) = cov_raw(5, 5);
+
+        // Save the current velocity to republish later. This is necessary because
+        // no other sensors measure velocity.
+        velocity = msg.twist.twist;
+
+        kf.update_encoders(z, cov_z);
+        if (watch_encoders) publish(msg.header.stamp);
+    } catch (tf::ExtrapolationException const &e) {
+        ROS_WARN("%s", e.what());
     }
-
-    Eigen::Vector3d const z = (Eigen::Vector3d() <<
-        msg.pose.pose.position.x,
-        msg.pose.pose.position.y,
-        tf::getYaw(msg.pose.pose.orientation)
-    ).finished();
-    Eigen::Map<Eigen::Matrix<double, 6, 6> const> cov_raw(
-        &msg.pose.covariance.front()
-    );
-
-    Eigen::Matrix3d cov_z = Eigen::Matrix3d::Zero();
-    cov_z.topLeftCorner<2, 2>() = cov_raw.topLeftCorner<2, 2>();
-    cov_z(2, 2) = cov_raw(5, 5);
-
-    // Save the current velocity to republish later. This is necessary because
-    // no other sensors measure velocity.
-    velocity = msg.twist.twist;
-
-    kf.update_encoders(z, cov_z);
-    if (watch_encoders) publish(msg.header.stamp);
 }
 
 static void updateGps(nav_msgs::Odometry const &msg)
@@ -191,8 +195,8 @@ int main(int argc, char **argv)
 
     sub_tf = boost::make_shared<tf::TransformListener>();
     pub_tf = boost::make_shared<tf::TransformBroadcaster>();
-    //sub_compass  = nh.subscribe("compass", 1, &updateCompass);
-    //sub_encoders = nh.subscribe("odom", 1, &updateEncoders);
+    sub_compass  = nh.subscribe("compass", 1, &updateCompass);
+    sub_encoders = nh.subscribe("odom", 1, &updateEncoders);
     sub_gps      = nh.subscribe("gps", 1, &updateGps);
     pub_fused    = nh.advertise<nav_msgs::Odometry>("odom_fused", 100);
 

@@ -1,5 +1,7 @@
 /bin/
 /build/
 /lib/
+/msg_gen/
+/src/robot_kf/
 *.swp
 *.swo

@@ -12,10 +12,8 @@ KalmanFilter::KalmanFilter(void)
     : x_(Vector3d::Zero())
     , cov_x_(9999 * Matrix3d::Identity())
     , A_(Matrix3d::Identity())
-    , B_(Matrix3d::Identity())
     , Hgps_((Matrix<double, 2, 3>() << 1, 0, 0, 0, 1, 0).finished())
     , Hcomp_((Matrix<double, 1, 3>() << 0, 0, 1).finished())
-    , encoders_prev_(x_)
 {}
 
 KalmanFilter::~KalmanFilter(void)
@@ -31,11 +29,17 @@ Matrix3d KalmanFilter::getCovariance(void) const
     return cov_x_;
 }
 
-void KalmanFilter::update_encoders(Vector3d encoders_curr, Matrix3d cov_enc)
+void KalmanFilter::update_encoders(Vector2d enc, Matrix2d cov_enc, double separation)
 {
-    Vector3d const delta = encoders_curr - encoders_prev_;
-    predict(delta, cov_enc, A_, B_);
-    encoders_prev_ = encoders_curr;
+    Matrix<double, 3, 2> const B = (Matrix<double, 3, 2>() <<
+        0.5 * cos(x_[2]),  0.5 * cos(x_[2]),
+        0.5 * sin(x_[2]),  0.5 * sin(x_[2]),
+        -1.0 / separation, 1.0 / separation
+    ).finished();
+    // TODO: Verify that this is correct.
+    Matrix3d const cov_process = B * cov_enc * B.transpose();
+
+    predict(enc, cov_process, A_, B);
     normalize_yaw();
 }
 
@@ -52,14 +56,14 @@ void KalmanFilter::update_compass(double compass, double cov_compass)
 
     measure(mat_compass, mat_cov_compass, Hcomp_);
     normalize_yaw();
-}
+} 
 
 template <int m>
-void KalmanFilter::predict(Matrix<double, m, 1> u, Matrix<double, m, m> cov_u,
+void KalmanFilter::predict(Matrix<double, m, 1> u, Matrix<double, 3, 3> cov_process,
                            Matrix<double, 3, 3> A, Matrix<double, 3, m> B)
 {
     x_ = A * x_ + B * u;
-    cov_x_ = A * cov_x_ * A.transpose() + cov_u;
+    cov_x_ = A * cov_x_ * A.transpose() + cov_process;
 }
 
 template <int m>

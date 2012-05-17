@@ -12,7 +12,4 @@
     <depend package="sensor_msgs"/>
     <depend package="tf"/>
     <depend package="tf_conversions"/>
-    <export>
-        <cpp cflags="-I${prefix}/include" lflags="-L${prefix}/lib -lkalman_kf"/>
-    </export>
 </package>

@@ -6,6 +6,7 @@
 #include <tf/transform_broadcaster.h>
 #include <tf_conversions/tf_eigen.h>
 #include <geometry_msgs/QuaternionStamped.h>
+#include <robot_kf/WheelOdometry.h>
 #include <nav_msgs/Odometry.h>
 #include <sensor_msgs/Imu.h>
 #include <robot_kf/robot_kf.h>
@@ -43,16 +44,23 @@ static void publish(ros::Time stamp)
     // we publish a transform from global_frame_id to odom_frame_id. This is
     // equivalent to transforming from base_frame_id to odom_frame_id.
     geometry_msgs::PoseStamped fused_odom;
-    sub_tf->transformPose(base_frame_id, fused_base, fused_odom);
+    try {
+        sub_tf->transformPose(base_frame_id, fused_base, fused_odom);
+    } catch (tf::ExtrapolationException const &e) {
+        ROS_WARN("%s", e.what());
+        return;
+    }
 
     // FIXME
-    //fused_odom = fused_base;
+    fused_odom = fused_base;
 
     // Publish the odometry message.
     nav_msgs::Odometry msg;
     msg.header.stamp = stamp;
-    msg.header.frame_id = global_frame_id;
-    msg.child_frame_id = odom_frame_id;
+    //msg.header.frame_id = global_frame_id;
+    //msg.child_frame_id = odom_frame_id;
+    msg.header.frame_id = odom_frame_id;
+    msg.child_frame_id = base_frame_id;
     msg.pose.pose = fused_odom.pose;
     msg.pose.covariance[0] = -1;
     msg.twist.twist = velocity;
@@ -60,6 +68,7 @@ static void publish(ros::Time stamp)
     pub_fused.publish(msg);
 
     // Transformation.
+#if 0
     geometry_msgs::TransformStamped transform;
     transform.header.stamp = stamp;
     transform.header.frame_id = global_frame_id;
@@ -69,6 +78,7 @@ static void publish(ros::Time stamp)
     transform.transform.translation.z = fused_odom.pose.position.z;
     transform.transform.rotation = fused_odom.pose.orientation;
     pub_tf->sendTransform(transform);
+#endif
 }
 
 static void updateCompass(sensor_msgs::Imu const &msg)
@@ -101,40 +111,25 @@ static void updateCompass(sensor_msgs::Imu const &msg)
     }
 }
 
-static void updateEncoders(nav_msgs::Odometry const &msg)
+static void updateEncoders(robot_kf::WheelOdometry const &msg)
 {
-    try {
-        if (msg.header.frame_id != odom_frame_id
-         || msg.child_frame_id != base_frame_id) {
-            ROS_ERROR_THROTTLE(10,
-                "Odometry message must have a frame_id '%s' and child_frame_id '%s'",
-                odom_frame_id.c_str(), base_frame_id.c_str()
-            );
-            return;
-        }
-
-        Eigen::Vector3d const z = (Eigen::Vector3d() <<
-            msg.pose.pose.position.x,
-            msg.pose.pose.position.y,
-            tf::getYaw(msg.pose.pose.orientation)
-        ).finished();
-        Eigen::Map<Eigen::Matrix<double, 6, 6> const> cov_raw(
-            &msg.pose.covariance.front()
-        );
-
-        Eigen::Matrix3d cov_z = Eigen::Matrix3d::Zero();
-        cov_z.topLeftCorner<2, 2>() = cov_raw.topLeftCorner<2, 2>();
-        cov_z(2, 2) = cov_raw(5, 5);
-
-        // Save the current velocity to republish later. This is necessary because
-        // no other sensors measure velocity.
-        velocity = msg.twist.twist;
-
-        kf.update_encoders(z, cov_z);
-        if (watch_encoders) publish(msg.header.stamp);
-    } catch (tf::ExtrapolationException const &e) {
-        ROS_WARN("%s", e.what());
+    if (msg.header.frame_id != base_frame_id) {
+        ROS_ERROR_THROTTLE(10, "WheelOdometry message must have frame_id '%s'", base_frame_id.c_str());
+        return;
+    } else if (msg.separation <= 0) {
+        ROS_ERROR_THROTTLE(10, "Wheel separation in WheelOdometry message must be positive.");
+        return;
     }
+
+    Eigen::Vector2d const z = (Eigen::Vector2d() <<
+        msg.left.movement, msg.right.movement).finished();
+    Eigen::Matrix2d const cov_z = (Eigen::Matrix2d() <<
+        msg.left.variance, 0.0, 0.0, msg.right.variance).finished();
+
+    // TODO: Compute velocity using the wheel encoders.
+
+    kf.update_encoders(z, cov_z, msg.separation);
+    if (watch_encoders) publish(msg.header.stamp);
 }
 
 static void updateGps(nav_msgs::Odometry const &msg)
@@ -196,7 +191,7 @@ int main(int argc, char **argv)
     sub_tf = boost::make_shared<tf::TransformListener>();
     pub_tf = boost::make_shared<tf::TransformBroadcaster>();
     sub_compass  = nh.subscribe("compass", 1, &updateCompass);
-    sub_encoders = nh.subscribe("odom", 1, &updateEncoders);
+    sub_encoders = nh.subscribe("wheel_odom", 1, &updateEncoders);
     sub_gps      = nh.subscribe("gps", 1, &updateGps);
     pub_fused    = nh.advertise<nav_msgs::Odometry>("odom_fused", 100);
 

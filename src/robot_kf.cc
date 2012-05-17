@@ -2,6 +2,7 @@
 #include <Eigen/Core>
 #include <Eigen/Dense>
 #include <Eigen/LU>
+#include <angles/angles.h>
 #include <robot_kf/robot_kf.h>
 
 using namespace Eigen;
@@ -77,7 +78,7 @@ void KalmanFilter::measure(Matrix<double, m, 1> z, Matrix<double, m, m> cov_z,
 }
 
 void KalmanFilter::normalize_yaw(void) {
-    x_[2] = fmod(x_[2], 2 * M_PI);
+    x_[2] = angles::normalize_angle(x_[2]);
 }
 
 };

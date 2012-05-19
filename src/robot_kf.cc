@@ -51,6 +51,15 @@ void KalmanFilter::update_gps(Vector2d gps, Matrix2d cov_gps)
 
 void KalmanFilter::update_compass(double compass, double cov_compass)
 {
+    // Renormalize the compass heading so the filter behaves correctly when
+    // crossing +/-pi. This prevents the heading from slowly drifting the "long
+    // way" around the circle (i.e. through 0 instead of +/-pi).
+    if (x_[2] - compass > M_PI) {
+        compass = compass + 2 * M_PI;
+    } else if (x_[2] - compass < -M_PI) {
+        compass = compass - 2 * M_PI;
+    }
+
     Matrix<double, 1, 1> mat_compass, mat_cov_compass;
     mat_compass << compass;
     mat_cov_compass << cov_compass;

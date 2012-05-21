@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 import roslib; roslib.load_manifest('robot_kf')
-import math, numpy as np, rospy
+import rospy
+import math
+import numpy as np
+import scipy.optimize
 from nav_msgs.msg import Odometry
 from robot_kf.msg import WheelOdometry
 from sensor_msgs.msg import Imu
@@ -49,7 +52,8 @@ class OdometryCalibrator:
         self.time_gps.pop()
         self.time_compass.pop()
 
-        def objective(rl, rr, s):
+        def objective(params):
+            rl, rr, s = params
             i_gps, i_compass = 0, 0
             odom_gps, odom_compass = np.zeros((3)), np.zeros((3))
             error_gps, error_compass = 0.0, 0.0
@@ -67,7 +71,6 @@ class OdometryCalibrator:
                 if i_compass < len(self.time_compass) and self.time_compass[i_compass] < self.time_odom[i_odom]:
                     # TODO: Correct for the sampling delay.
                     error_compass += abs(odom_compass[2] - compass_delta[i_compass, 0])
-                    print odom_compass[2], '?=', compass_delta[i_compass, 0]
                     odom_compass = np.zeros(3)
                     i_compass += 1
 
@@ -85,8 +88,10 @@ class OdometryCalibrator:
             error_compass /= len(compass_delta)
             return error_gps + alpha * error_compass
 
-        print 'good =', objective(0.127, 0.127, 1.0)
-        print 'bad =',  objective(10.0, 10.0, 10.0)
+        # TODO: Restrict the parameters to be positive.
+        guess = np.array([ 0.10, 0.10, 1.25 ])
+        params = scipy.optimize.fmin_slsqp(objective, guess, iprint=2)
+        print params
 
     @classmethod
     def _get_odom_pose(cls, msg):

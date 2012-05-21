@@ -40,11 +40,14 @@ class OdometryCalibrator:
         odom = np.array(self.data_odom)
 
         # Find the distance between subsequent GPS samples.
-        # TODO: Truncate the first and last rows.
         zero = np.zeros((1, 2))
         gps_delta = np.vstack((gps, zero)) - np.vstack((zero, gps))
-        gps_linear = np.hypot(gps_delta[:, 0], gps_delta[:, 1])
-        compass_delta = np.vstack((compass, 0)) - np.vstack((0, compass))
+        gps_linear = np.hypot(gps_delta[:, 0], gps_delta[:, 1])[1:-1]
+        compass_delta = (np.vstack((compass, 0)) - np.vstack((0, compass)))[1:-1]
+
+        # Truncate the first and last rows, since they are not valid deltas.
+        self.time_gps.pop()
+        self.time_compass.pop()
 
         def objective(rl, rr, s):
             i_gps, i_compass = 0, 0
@@ -64,6 +67,7 @@ class OdometryCalibrator:
                 if i_compass < len(self.time_compass) and self.time_compass[i_compass] < self.time_odom[i_odom]:
                     # TODO: Correct for the sampling delay.
                     error_compass += abs(odom_compass[2] - compass_delta[i_compass, 0])
+                    print odom_compass[2], '?=', compass_delta[i_compass, 0]
                     odom_compass = np.zeros(3)
                     i_compass += 1
 
@@ -77,9 +81,12 @@ class OdometryCalibrator:
                                            linear * math.sin(odom_compass[2]),
                                            angular ])
 
-            error_gps /= len(gps_delta)
+            error_gps /= len(gps_linear)
             error_compass /= len(compass_delta)
             return error_gps + alpha * error_compass
+
+        print 'good =', objective(0.127, 0.127, 1.0)
+        print 'bad =',  objective(10.0, 10.0, 10.0)
 
     @classmethod
     def _get_odom_pose(cls, msg):

@@ -1,18 +1,15 @@
 #!/usr/bin/env python
 import roslib; roslib.load_manifest('robot_kf')
-import numpy as np, rospy
+import math, numpy as np, rospy
 from nav_msgs.msg import Odometry
 from robot_kf.msg import WheelOdometry
 from sensor_msgs.msg import Imu
 
 class OdometryCalibrator:
     def __init__(self):
-        self.curr_odom = None
-        self.prev_gps = None
-        self.prev_compass = None
-        self.prev_odom_gps = None
-        self.prev_odom_compass = None
-
+        self.time_gps = list()
+        self.time_compass = list()
+        self.time_odom = list()
         self.data_gps = list()
         self.data_compass = list()
         self.data_odom = list()
@@ -22,62 +19,82 @@ class OdometryCalibrator:
         self.sub_gps = rospy.Subscriber(topic_gps, Odometry, self.callback_gps)
         self.sub_compass = rospy.Subscriber(topic_compass, Imu, self.callback_compass)
 
-    def callback_gps(self, curr_gps):
-        if not (self.prev_gps and self.curr_odom and self.prev_odom_gps):
-            self.prev_gps = curr_gps
-            return 
+    def callback_gps(self, msg):
+        datum_gps = self._get_odom_pose(msg)
+        self.time_gps.append(msg.header.stamp)
+        self.data_gps.append(datum_gps[0:2])
 
-        delta_gps = self._get_state(curr_gps) - self._get_state(self.prev_gps)
-        delta_gps_time = curr_gps.header.stamp - self.prev_gps.header.stamp
+    def callback_compass(self, msg):
+        datum_compass = self._get_compass_yaw(msg)
+        self.time_compass.append(msg.header.stamp)
+        self.data_compass.append(datum_compass)
 
-        self.data_gps.append(list(delta_gps[0:2]))
-        self.prev_gps = curr_gps
+    def callback_odom(self, msg):
+        datum_odom = self._get_wheel_movement(msg)
+        self.time_odom.append(msg.header.stamp)
+        self.data_odom.append(datum_odom)
 
-    def callback_compass(self, curr_compass):
-        if not (self.prev_compass and self.curr_odom and self.prev_odom_compass):
-            self.prev_compass = curr_compass
-            return
+    def optimize(self, alpha):
+        gps = np.array(self.data_gps)
+        compass = np.array(self.data_compass)
+        odom = np.array(self.data_odom)
 
-        delta_compass = self._get_state(curr_compass) - self._get_state(self.prev_compass)
-        delta_compass_time = curr_compass.header.stamp - self.prev_compass.header.stamp
+        # Find the distance between subsequent GPS samples.
+        # TODO: Truncate the first and last rows.
+        zero = np.zeros((1, 2))
+        gps_delta = np.vstack((gps, zero)) - np.vstack((zero, gps))
+        gps_linear = np.hypot(gps_delta[:, 0], gps_delta[:, 1])
+        compass_delta = np.vstack((compass, 0)) - np.vstack((0, compass))
 
-        self.data_compass.append(delta_compass[2])
-        self.prev_odom_compass = self.curr_odom
-        self.prev_compass = curr_compass
+        def objective(rl, rr, s):
+            i_gps, i_compass = 0, 0
+            odom_gps, odom_compass = np.zeros((3)), np.zeros((3))
+            error_gps, error_compass = 0.0, 0.0
 
-    def callback_odom(self, curr_odom):
-        self.prev_odom = self.curr_odom
-        self.curr_odom = curr_odom
-        self.data_odom.append(list(self._get_state(curr_odom)))
+            for i_odom in xrange(0, odom.shape[0]):
+                # Compare the relative movement estimated by the odometry with
+                # that measured by the GPS.
+                if i_gps < len(self.time_gps) and self.time_gps[i_gps] < self.time_odom[i_odom]:
+                    # TODO: Correct for the sampling delay.
+                    error_gps += abs(np.linalg.norm(odom_gps[0:2]) - gps_linear[i_gps])
+                    odom_gps = np.zeros(3)
+                    i_gps += 1
 
-        if not self.prev_odom_gps:
-            self.prev_odom_gps = curr_odom
+                # Compare the change in heading with the compass measurements.
+                if i_compass < len(self.time_compass) and self.time_compass[i_compass] < self.time_odom[i_odom]:
+                    # TODO: Correct for the sampling delay.
+                    error_compass += abs(odom_compass[2] - compass_delta[i_compass, 0])
+                    odom_compass = np.zeros(3)
+                    i_compass += 1
 
-        if not self.prev_odom_compass:
-            self.prev_odom_compass = curr_odom
+                # Integrate the wheel odometry to estimate the change in pose.
+                linear  = (rr * odom[i_odom, 1] + rl * odom[i_odom, 0]) / 2
+                angular = (rr * odom[i_odom, 1] - rl * odom[i_odom, 0]) / s
+                odom_gps += np.array([ linear * math.cos(odom_gps[2]),
+                                       linear * math.sin(odom_gps[2]),
+                                       angular ])
+                odom_compass += np.array([ linear * math.cos(odom_compass[2]),
+                                           linear * math.sin(odom_compass[2]),
+                                           angular ])
 
-    def optimize(self):
-        x_gps = np.array(self.data_gps)
-        x_compass = np.array(self.data_compass)
-        x_odom = np.array(self.data_odom)
-
-        print 'gps = ', x_gps
-        print 'compass = ', x_compass
-        print 'odom = ', x_odom
+            error_gps /= len(gps_delta)
+            error_compass /= len(compass_delta)
+            return error_gps + alpha * error_compass
 
     @classmethod
-    def _get_state(cls, msg):
-        if isinstance(msg, Odometry):
-            position = msg.pose.pose.position
-            yaw = cls._get_yaw(msg.pose.pose.orientation)
-            return np.array([ position.x, position.y, yaw ])
-        elif isinstance(msg, WheelOdometry):
-            return np.array([ msg.left.movement, msg.right.movement ])
-        elif isinstance(msg, Imu):
-            yaw = cls._get_yaw(msg.orientation)
-            return np.array([ 0, 0, yaw ])
-        else:
-            return None
+    def _get_odom_pose(cls, msg):
+        position = msg.pose.pose.position
+        yaw = cls._get_yaw(msg.pose.pose.orientation)
+        return [ position.x, position.y, yaw ]
+
+    @classmethod
+    def _get_compass_yaw(cls, msg):
+        yaw = cls._get_yaw(msg.orientation)
+        return [ yaw ]
+
+    @classmethod
+    def _get_wheel_movement(cls, msg):
+        return [ msg.left.movement, msg.right.movement ]
 
     @classmethod
     def _get_yaw(cls, qt):
@@ -94,7 +111,7 @@ def main():
 
     rospy.spin()
 
-    calibrator.optimize()
+    calibrator.optimize(1.0)
 
 if __name__ == '__main__':
     main()

@@ -55,24 +55,41 @@ class OdometryCalibrator:
         def objective(params):
             rl, rr, s = params
             i_gps, i_compass = 0, 0
-            odom_gps, odom_compass = np.zeros((3)), np.zeros((3))
+            i_odom_gps, i_odom_compass = 0, 0
+            odom_gps, odom_compass = np.zeros(3), np.zeros(3)
             error_gps, error_compass = 0.0, 0.0
 
-            for i_odom in xrange(0, odom.shape[0]):
+            for i_odom in xrange(1, odom.shape[0]):
                 # Compare the relative movement estimated by the odometry with
                 # that measured by the GPS.
                 if i_gps < len(self.time_gps) and self.time_gps[i_gps] < self.time_odom[i_odom]:
-                    # TODO: Correct for the sampling delay.
+                    # Correct for the delay between the last odom update and this GPS update.
+                    if i_gps > 0:
+                        dt_gps = self.time_gps[i_gps] - self.time_gps[i_gps - 1]
+                        dt_odom = self.time_odom[i_odom] - self.time_odom[i_odom_gps]
+                        odom_gps *= dt_gps.to_sec() / dt_odom.to_sec()
+
                     error_gps += abs(np.linalg.norm(odom_gps[0:2]) - gps_linear[i_gps])
                     odom_gps = np.zeros(3)
+                    i_odom_gps = i_odom
                     i_gps += 1
 
                 # Compare the change in heading with the compass measurements.
-                if i_compass < len(self.time_compass) and self.time_compass[i_compass] < self.time_odom[i_odom]:
-                    # TODO: Correct for the sampling delay.
-                    error_compass += abs(odom_compass[2] - compass_delta[i_compass, 0])
-                    odom_compass = np.zeros(3)
+                skip_compass = 0
+                while i_compass < len(self.time_compass) and self.time_compass[i_compass] < self.time_odom[i_odom]:
+                    skip_compass += 1
                     i_compass += 1
+
+                if skip_compass > 0:
+                    # Correct for the delay between the last odom update and this compass update.
+                    if i_compass > 0:
+                        dt_compass = self.time_compass[i_compass - 1] - self.time_compass[i_compass - 2]
+                        dt_odom = self.time_odom[i_odom] - self.time_odom[i_odom_compass]
+                        odom_compass *= dt_compass.to_sec() / dt_odom.to_sec()
+
+                    error_compass += abs(odom_compass[2] - compass_delta[i_compass - 1, 0])
+                    odom_compass = np.zeros(3)
+                    i_odom_compass = i_odom
 
                 # Integrate the wheel odometry to estimate the change in pose.
                 linear  = (rr * odom[i_odom, 1] + rl * odom[i_odom, 0]) / 2

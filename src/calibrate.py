@@ -62,25 +62,29 @@ class OdometryCalibrator:
             for i_odom in xrange(1, odom.shape[0]):
                 # Compare the relative movement estimated by the odometry with
                 # that measured by the GPS.
-                if i_gps < len(self.time_gps) and self.time_gps[i_gps] < self.time_odom[i_odom]:
+                advance = 0
+                while i_gps < len(self.time_gps) and self.time_gps[i_gps] < self.time_odom[i_odom]:
+                    advance += 1
+                    i_gps += 1
+
+                if advance > 0:
                     # Correct for the delay between the last odom update and this GPS update.
                     if i_gps > 0:
-                        dt_gps = self.time_gps[i_gps] - self.time_gps[i_gps - 1]
+                        dt_gps = self.time_gps[i_gps - 1] - self.time_gps[i_gps - 2]
                         dt_odom = self.time_odom[i_odom] - self.time_odom[i_odom_gps]
                         odom_gps *= dt_gps.to_sec() / dt_odom.to_sec()
 
-                    error_gps += abs(np.linalg.norm(odom_gps[0:2]) - gps_linear[i_gps])
+                    error_gps += abs(np.linalg.norm(odom_gps[0:2]) - gps_linear[i_gps - 1])
                     odom_gps = np.zeros(3)
                     i_odom_gps = i_odom
-                    i_gps += 1
 
                 # Compare the change in heading with the compass measurements.
-                skip_compass = 0
+                advance = 0
                 while i_compass < len(self.time_compass) and self.time_compass[i_compass] < self.time_odom[i_odom]:
-                    skip_compass += 1
+                    advance += 1
                     i_compass += 1
 
-                if skip_compass > 0:
+                if advance > 0:
                     # Correct for the delay between the last odom update and this compass update.
                     if i_compass > 0:
                         dt_compass = self.time_compass[i_compass - 1] - self.time_compass[i_compass - 2]

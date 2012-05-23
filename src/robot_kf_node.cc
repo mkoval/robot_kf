@@ -104,7 +104,7 @@ static void updateCompass(sensor_msgs::Imu const &msg)
 
         kf.update_compass(tf::getYaw(stamped_out.quaternion), cov(2, 2));
         if (watch_compass) publish(stamp);
-    } catch (tf::ExtrapolationException const &e) {
+    } catch (tf::TransformException const &e) {
         ROS_WARN("%s", e.what());
     }
 }
@@ -160,16 +160,10 @@ static void updateGps(nav_msgs::Odometry const &msg)
         Eigen::Matrix3d const cov3 = rotation.transpose() * cov3_raw * rotation;
         Eigen::Matrix2d const cov  = cov3.topLeftCorner<2, 2>();
 
-
-        std::cout << "GPS: (" << z[0] << ", " << z[1] << "), "
-                  << "sigma = [" << cov(0, 0) << " " << cov(0, 1) << " ; "
-                                 << cov(1, 0) << " " << cov(1, 1) << " ]"
-                  << std::endl;
-
         kf.update_gps(z, cov);
 
         if (watch_gps) publish(msg.header.stamp);
-    } catch (tf::ExtrapolationException const &e) {
+    } catch (tf::TransformException const &e) {
         ROS_WARN("%s", e.what());
     }
 }

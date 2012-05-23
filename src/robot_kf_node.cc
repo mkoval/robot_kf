@@ -28,8 +28,6 @@ static void publish(ros::Time stamp)
 {
     Eigen::Vector3d const state = kf.getState();
 
-    std::cout << "Fused: (" << state[0] << ", " << state[1] << ")" << std::endl;
-
     // Wrap the fused state estimate in a ROS message.
     geometry_msgs::PoseStamped fused_base;
     fused_base.header.stamp    = stamp;
@@ -39,46 +37,46 @@ static void publish(ros::Time stamp)
     fused_base.pose.position.z = 0.0;
     fused_base.pose.orientation = tf::createQuaternionMsgFromYaw(state[2]);
 
-    // We can't directly publish the transformation from global_frame_id to
-    // base_frame_id because it would create a cycle in the TF tree. Instead,
-    // we publish a transform from global_frame_id to odom_frame_id. This is
-    // equivalent to transforming from base_frame_id to odom_frame_id.
-    geometry_msgs::PoseStamped fused_odom;
+    /*
+     * We actually want to publish the /map to /base_footprint transform, but
+     * this would cause /base_footprint to have two parents. Instead, we need
+     * to publish the /map to /odom transform. See this chart:
+     *
+     * /map --[T1]--> /odom --[T2]--> /base_footprint
+     * /map ----------[T3]----------> /base_footprint
+     *
+     * The output of the Kalman filter is T3, but we want T1. We find T1 by
+     * computing T1 = T3 * inv(T2), where T2 is provided by the odometry
+     * source.
+     */
+    tf::Vector3 const pos(state[0], state[1], 0);
+    tf::Quaternion const ori = tf::createQuaternionFromYaw(state[2]);
+    tf::Transform t3(ori, pos);
+
+    tf::StampedTransform t2;
     try {
-        sub_tf->transformPose(base_frame_id, fused_base, fused_odom);
-    } catch (tf::ExtrapolationException const &e) {
+        sub_tf->lookupTransform(odom_frame_id, base_frame_id, stamp, t2);
+    } catch (tf::TransformException const &e) {
         ROS_WARN("%s", e.what());
         return;
     }
 
-    // FIXME
-    fused_odom = fused_base;
+    ros::Time out_stamp = ros::Time::now();
 
+    tf::Transform const t1 = t3 * t2.inverse();
+    tf::StampedTransform transform(t1, out_stamp, global_frame_id, odom_frame_id);
+    pub_tf->sendTransform(transform);
+    
     // Publish the odometry message.
     nav_msgs::Odometry msg;
-    msg.header.stamp = stamp;
-    //msg.header.frame_id = global_frame_id;
-    //msg.child_frame_id = odom_frame_id;
-    msg.header.frame_id = odom_frame_id;
+    msg.header.stamp = out_stamp;
+    msg.header.frame_id = global_frame_id;
     msg.child_frame_id = base_frame_id;
-    msg.pose.pose = fused_odom.pose;
+    msg.pose.pose =  fused_base.pose;
     msg.pose.covariance[0] = -1;
     msg.twist.twist = velocity;
     msg.twist.covariance[0] = -1;
     pub_fused.publish(msg);
-
-    // Transformation.
-#if 0
-    geometry_msgs::TransformStamped transform;
-    transform.header.stamp = stamp;
-    transform.header.frame_id = global_frame_id;
-    transform.child_frame_id = odom_frame_id;
-    transform.transform.translation.x = fused_odom.pose.position.x;
-    transform.transform.translation.y = fused_odom.pose.position.y;
-    transform.transform.translation.z = fused_odom.pose.position.z;
-    transform.transform.rotation = fused_odom.pose.orientation;
-    pub_tf->sendTransform(transform);
-#endif
 }
 
 static void updateCompass(sensor_msgs::Imu const &msg)

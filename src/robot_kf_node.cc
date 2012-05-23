@@ -55,22 +55,19 @@ static void publish(ros::Time stamp)
 
     tf::StampedTransform t2;
     try {
-        sub_tf->lookupTransform(odom_frame_id, base_frame_id, stamp, t2);
+        sub_tf->lookupTransform(odom_frame_id, base_frame_id, ros::Time(0), t2);
     } catch (tf::TransformException const &e) {
         ROS_WARN("%s", e.what());
         return;
     }
 
-    // FIXME: This is a hack. The output messages should use stamp.
-    ros::Time out_stamp = ros::Time::now();
-
     tf::Transform const t1 = t3 * t2.inverse();
-    tf::StampedTransform transform(t1, out_stamp, global_frame_id, odom_frame_id);
+    tf::StampedTransform transform(t1, stamp, global_frame_id, odom_frame_id);
     pub_tf->sendTransform(transform);
     
     // Publish the odometry message.
     nav_msgs::Odometry msg;
-    msg.header.stamp = out_stamp;
+    msg.header.stamp = stamp;
     msg.header.frame_id = global_frame_id;
     msg.child_frame_id = base_frame_id;
     msg.pose.pose =  fused_base.pose;
@@ -83,32 +80,17 @@ static void publish(ros::Time stamp)
 
 static void updateCompass(sensor_msgs::Imu const &msg)
 {
-    try {
-        ros::Time const stamp = msg.header.stamp;
-        std::string const frame_id = msg.header.frame_id;
-
-        // Transform the orientation into the base coordinate frame.
-        geometry_msgs::QuaternionStamped stamped_in, stamped_out;
-        stamped_in.header.frame_id = frame_id;
-        stamped_in.header.stamp    = stamp;
-        stamped_in.quaternion = msg.orientation;
-        sub_tf->transformQuaternion(base_frame_id, stamped_in, stamped_out);
-
-        // Rotate the covariance matrix according to the transformation.
-        tf::StampedTransform transform;
-        Eigen::Affine3d eigen_transform;
-        sub_tf->lookupTransform(base_frame_id, frame_id, stamp, transform);
-        tf::TransformTFToEigen(transform, eigen_transform);
-
-        Eigen::Matrix3d const rotation = eigen_transform.rotation();
-        Eigen::Map<Eigen::Matrix3d const> cov_raw(&msg.orientation_covariance.front());
-        Eigen::Matrix3d const cov = rotation.transpose() * cov_raw * rotation;
-
-        kf.update_compass(tf::getYaw(stamped_out.quaternion), cov(2, 2));
-        if (watch_compass) publish(stamp);
-    } catch (tf::TransformException const &e) {
-        ROS_WARN("%s", e.what());
+    if (msg.header.frame_id != base_frame_id) {
+        ROS_ERROR_THROTTLE(10, "Imu message must have frame_id '%s'",
+                           base_frame_id.c_str());
+        return;
     }
+
+    double const yaw = tf::getYaw(msg.orientation);
+    Eigen::Map<Eigen::Matrix3d const> cov_raw(&msg.orientation_covariance.front());
+
+    kf.update_compass(yaw, cov_raw(2, 2));
+    if (watch_compass) publish(msg.header.stamp);
 }
 
 static void updateEncoders(robot_kf::WheelOdometry const &msg)
@@ -133,7 +115,6 @@ static void updateEncoders(robot_kf::WheelOdometry const &msg)
     double const movement_linear = (z[1] + z[0]) / 2;
     double const movement_angular = (z[1] - z[0]) / msg.separation;
     double const delta_time = msg.timestep.toSec();
-    ROS_INFO("dt = %f", msg.timestep.toSec());
     velocity.linear.x = movement_linear / delta_time;
     velocity.angular.z = movement_angular / delta_time;
 

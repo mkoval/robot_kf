@@ -61,6 +61,7 @@ static void publish(ros::Time stamp)
         return;
     }
 
+    // FIXME: This is a hack. The output messages should use stamp.
     ros::Time out_stamp = ros::Time::now();
 
     tf::Transform const t1 = t3 * t2.inverse();
@@ -73,6 +74,7 @@ static void publish(ros::Time stamp)
     msg.header.frame_id = global_frame_id;
     msg.child_frame_id = base_frame_id;
     msg.pose.pose =  fused_base.pose;
+    // Propagate the covariance forward.
     msg.pose.covariance[0] = -1;
     msg.twist.twist = velocity;
     msg.twist.covariance[0] = -1;
@@ -124,7 +126,16 @@ static void updateEncoders(robot_kf::WheelOdometry const &msg)
     Eigen::Matrix2d const cov_z = (Eigen::Matrix2d() <<
         msg.left.variance, 0.0, 0.0, msg.right.variance).finished();
 
-    // TODO: Compute velocity using the wheel encoders.
+    // Compute velocity using the wheel encoders. Theoretically the GPS and
+    // compass could also be used to estimate these velocities, but those
+    // estimates are too noisy to justify the complexity of adding two more
+    // state variables.
+    double const movement_linear = (z[1] + z[0]) / 2;
+    double const movement_angular = (z[1] - z[0]) / msg.separation;
+    double const delta_time = msg.timestep.toSec();
+    ROS_INFO("dt = %f", msg.timestep.toSec());
+    velocity.linear.x = movement_linear / delta_time;
+    velocity.angular.z = movement_angular / delta_time;
 
     kf.update_encoders(z, cov_z, msg.separation);
     if (watch_encoders) publish(msg.header.stamp);
@@ -171,6 +182,12 @@ static void updateGps(nav_msgs::Odometry const &msg)
 int main(int argc, char **argv)
 {
     ros::init(argc, argv, "robot_kf_node");
+
+    // Initialize the skeleton twist message.
+    velocity.linear.y = 0;
+    velocity.linear.z = 0;
+    velocity.angular.x = 0;
+    velocity.angular.y = 0;
 
     ros::NodeHandle nh, nh_node("~");
     nh_node.param<bool>("watch_compass",  watch_compass,  true);

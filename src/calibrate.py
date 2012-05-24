@@ -37,7 +37,7 @@ class OdometryCalibrator:
         self.time_odom.append(msg.header.stamp)
         self.data_odom.append(datum_odom)
 
-    def optimize(self, alpha):
+    def optimize(self, guess, alpha):
         gps = np.array(self.data_gps)
         compass = np.array(self.data_compass)
         odom = np.array(self.data_odom)
@@ -110,7 +110,6 @@ class OdometryCalibrator:
             return error_gps + alpha * error_compass
 
         # TODO: Restrict the parameters to be positive.
-        guess = np.array([ 0.10, 0.10, 1.25 ])
         params = scipy.optimize.fmin_slsqp(objective, guess, iprint=2)
         print params
 
@@ -144,7 +143,8 @@ def main():
 
     rospy.spin()
 
-    calibrator.optimize(1.0)
+    guess = np.array([ 1.0, 1.0, 2.0 ])
+    calibrator.optimize(guess, 5.0)
 
 if __name__ == '__main__':
     main()

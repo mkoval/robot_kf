@@ -55,7 +55,7 @@ static void publish(ros::Time stamp)
 
     tf::StampedTransform t2;
     try {
-        sub_tf->lookupTransform(odom_frame_id, base_frame_id, ros::Time(0), t2);
+        sub_tf->lookupTransform(odom_frame_id, base_frame_id, stamp, t2);
     } catch (tf::TransformException const &e) {
         ROS_WARN("%s", e.what());
         return;
@@ -124,40 +124,25 @@ static void updateEncoders(robot_kf::WheelOdometry const &msg)
 
 static void updateGps(nav_msgs::Odometry const &msg)
 {
-    try {
-        ros::Time const stamp = msg.header.stamp;
-        std::string const frame_id = msg.child_frame_id;
-
-        // Transform the position into the base coordinate frame.
-        geometry_msgs::PointStamped stamped_in, stamped_out;
-        stamped_in.header.stamp = stamp;
-        stamped_in.header.frame_id = frame_id;
-        stamped_in.point = msg.pose.pose.position;
-        sub_tf->transformPoint(base_frame_id, stamped_in, stamped_out);
-
-        Eigen::Vector2d const z = (Eigen::Vector2d() <<
-            stamped_out.point.x, stamped_out.point.y).finished();
-        Eigen::Map<Eigen::Matrix<double, 6, 6> const> cov_raw(
-            &msg.pose.covariance.front()
-        );
-        Eigen::Matrix3d const cov3_raw = cov_raw.topLeftCorner<3, 3>();
-
-        // Rotate the covariance matrix according to the transformation.
-        tf::StampedTransform transform;
-        Eigen::Affine3d eigen_transform;
-        sub_tf->lookupTransform(base_frame_id, frame_id, stamp, transform);
-        tf::TransformTFToEigen(transform, eigen_transform);
-
-        Eigen::Matrix3d const rotation = eigen_transform.rotation();
-        Eigen::Matrix3d const cov3 = rotation.transpose() * cov3_raw * rotation;
-        Eigen::Matrix2d const cov  = cov3.topLeftCorner<2, 2>();
-
-        kf.update_gps(z, cov);
-
-        if (watch_gps) publish(msg.header.stamp);
-    } catch (tf::TransformException const &e) {
-        ROS_WARN("%s", e.what());
+    if (msg.header.frame_id != global_frame_id) {
+        ROS_ERROR_THROTTLE(10, "GPS message must have frame_id '%s'",
+                           global_frame_id.c_str());
+        return;
+    } else if (msg.child_frame_id != base_frame_id) {
+        ROS_ERROR_THROTTLE(10, "GPS message must have child_frame_id '%s'",
+                           base_frame_id.c_str());
+        return;
     }
+    Eigen::Vector2d const z = (Eigen::Vector2d() <<
+        msg.pose.pose.position.x, msg.pose.pose.position.y).finished();
+    Eigen::Map<Eigen::Matrix<double, 6, 6> const> cov_raw(
+        &msg.pose.covariance.front()
+    );
+    Eigen::Matrix2d const cov = cov_raw.topLeftCorner<2, 2>();
+
+    kf.update_gps(z, cov);
+
+    if (watch_gps) publish(msg.header.stamp);
 }
 
 int main(int argc, char **argv)
@@ -172,8 +157,8 @@ int main(int argc, char **argv)
 
     ros::NodeHandle nh, nh_node("~");
     nh_node.param<bool>("watch_compass",  watch_compass,  true);
-    nh_node.param<bool>("watch_encoders", watch_encoders, true);
-    nh_node.param<bool>("watch_gps",      watch_gps,      true);
+    nh_node.param<bool>("watch_encoders", watch_encoders, false);
+    nh_node.param<bool>("watch_gps",      watch_gps,      false);
     nh_node.param<std::string>("global_frame_id", global_frame_id, "/map");
     nh_node.param<std::string>("odom_frame_id",   odom_frame_id,   "/odom");
     nh_node.param<std::string>("base_frame_id",   base_frame_id,   "/base_footprint");

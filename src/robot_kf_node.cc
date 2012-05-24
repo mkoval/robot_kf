@@ -21,8 +21,8 @@ static ros::Publisher pub_fused;
 static robot_kf::KalmanFilter kf;
 static geometry_msgs::Twist velocity;
 
-static bool watch_compass, watch_encoders, watch_gps;
-static std::string global_frame_id, odom_frame_id, base_frame_id;
+static std::string global_frame_id, odom_frame_id, base_frame_id, offset_frame_id;
+static boost::shared_ptr<tf::Transform> offset_tf;
 
 static void publish(ros::Time stamp)
 {
@@ -65,6 +65,12 @@ static void publish(ros::Time stamp)
     tf::Transform const t1 = t3 * t2.inverse();
     tf::StampedTransform transform(t1, stamp, global_frame_id, odom_frame_id);
     pub_tf->sendTransform(transform);
+
+    // Relative frame to fix RViz numerical stability issues.
+    if (offset_tf) {
+        tf::StampedTransform offset_stamped(*offset_tf, stamp, global_frame_id, offset_frame_id);
+        pub_tf->sendTransform(offset_stamped);
+    }
     
     // Publish the odometry message.
     nav_msgs::Odometry msg;
@@ -72,7 +78,7 @@ static void publish(ros::Time stamp)
     msg.header.frame_id = global_frame_id;
     msg.child_frame_id = base_frame_id;
     msg.pose.pose =  fused_base.pose;
-    // Propagate the covariance forward.
+    // TODO: Propagate the covariance forward.
     msg.pose.covariance[0] = -1;
     msg.twist.twist = velocity;
     msg.twist.covariance[0] = -1;
@@ -140,6 +146,13 @@ static void updateGps(nav_msgs::Odometry const &msg)
     );
     Eigen::Matrix2d const cov = cov_raw.topLeftCorner<2, 2>();
 
+    if (!offset_tf) {
+        tf::Vector3 const pos_offset(z[0], z[1], 0.0);
+        tf::Quaternion const ori_offset(0.0, 0.0, 0.0, 1.0);
+        offset_tf = boost::make_shared<tf::Transform>(ori_offset, pos_offset);
+        ROS_INFO("Initialized %s to (%f, %f)", offset_frame_id.c_str(), z[0], z[1]);
+    }
+
     kf.update_gps(z, cov);
 }
 
@@ -155,8 +168,9 @@ int main(int argc, char **argv)
 
     ros::NodeHandle nh, nh_node("~");
     nh_node.param<std::string>("global_frame_id", global_frame_id, "/map");
-    nh_node.param<std::string>("odom_frame_id",   odom_frame_id,   "/odom");
-    nh_node.param<std::string>("base_frame_id",   base_frame_id,   "/base_footprint");
+    nh_node.param<std::string>("odom_frame_id", odom_frame_id, "/odom");
+    nh_node.param<std::string>("base_frame_id", base_frame_id, "/base_footprint");
+    nh_node.param<std::string>("offset_frame_id", offset_frame_id, "/map_offset");
 
     sub_tf = boost::make_shared<tf::TransformListener>();
     pub_tf = boost::make_shared<tf::TransformBroadcaster>();

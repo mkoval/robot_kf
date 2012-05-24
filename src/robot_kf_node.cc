@@ -55,6 +55,7 @@ static void publish(ros::Time stamp)
 
     tf::StampedTransform t2;
     try {
+        sub_tf->waitForTransform(odom_frame_id, base_frame_id, stamp, ros::Duration(1.0));
         sub_tf->lookupTransform(odom_frame_id, base_frame_id, stamp, t2);
     } catch (tf::TransformException const &e) {
         ROS_WARN("%s", e.what());
@@ -90,7 +91,6 @@ static void updateCompass(sensor_msgs::Imu const &msg)
     Eigen::Map<Eigen::Matrix3d const> cov_raw(&msg.orientation_covariance.front());
 
     kf.update_compass(yaw, cov_raw(2, 2));
-    if (watch_compass) publish(msg.header.stamp);
 }
 
 static void updateEncoders(robot_kf::WheelOdometry const &msg)
@@ -119,7 +119,7 @@ static void updateEncoders(robot_kf::WheelOdometry const &msg)
     velocity.angular.z = movement_angular / delta_time;
 
     kf.update_encoders(z, cov_z, msg.separation);
-    if (watch_encoders) publish(msg.header.stamp);
+    publish(msg.header.stamp);
 }
 
 static void updateGps(nav_msgs::Odometry const &msg)
@@ -141,8 +141,6 @@ static void updateGps(nav_msgs::Odometry const &msg)
     Eigen::Matrix2d const cov = cov_raw.topLeftCorner<2, 2>();
 
     kf.update_gps(z, cov);
-
-    if (watch_gps) publish(msg.header.stamp);
 }
 
 int main(int argc, char **argv)
@@ -156,9 +154,6 @@ int main(int argc, char **argv)
     velocity.angular.y = 0;
 
     ros::NodeHandle nh, nh_node("~");
-    nh_node.param<bool>("watch_compass",  watch_compass,  true);
-    nh_node.param<bool>("watch_encoders", watch_encoders, false);
-    nh_node.param<bool>("watch_gps",      watch_gps,      false);
     nh_node.param<std::string>("global_frame_id", global_frame_id, "/map");
     nh_node.param<std::string>("odom_frame_id",   odom_frame_id,   "/odom");
     nh_node.param<std::string>("base_frame_id",   base_frame_id,   "/base_footprint");

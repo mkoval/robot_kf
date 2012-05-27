@@ -134,17 +134,39 @@ static void updateGps(nav_msgs::Odometry const &msg)
         ROS_ERROR_THROTTLE(10, "GPS message must have frame_id '%s'",
                            global_frame_id.c_str());
         return;
-    } else if (msg.child_frame_id != base_frame_id) {
-        ROS_ERROR_THROTTLE(10, "GPS message must have child_frame_id '%s'",
-                           base_frame_id.c_str());
-        return;
     }
-    Eigen::Vector2d const z = (Eigen::Vector2d() <<
+
+    Eigen::Vector2d const z_raw = (Eigen::Vector2d() <<
         msg.pose.pose.position.x, msg.pose.pose.position.y).finished();
-    Eigen::Map<Eigen::Matrix<double, 6, 6> const> cov_raw(
+    Eigen::Map<Eigen::Matrix<double, 6, 6> const> cov6_raw(
         &msg.pose.covariance.front()
     );
-    Eigen::Matrix2d const cov = cov_raw.topLeftCorner<2, 2>();
+    Eigen::Matrix2d const cov_raw = cov6_raw.topLeftCorner<2, 2>();
+
+    /* The GPS gives a position relative to child_frame_id, which is located at
+     * the center of the GPS antennna. However, the Kalman filter only manipulates
+     * quantities in base_frame_id. So the situation is:
+     *
+     *     /map --[ T1 ]--> /gps <--[ T2 ]-- /base_footprint
+     *     /map -----------[ T3 ]----------> /base_footprint
+     *
+     * Transformation T1 is provided by the GPS, T2 is a static transformation
+     * provided by the URDF, and T3 is the desired translation. Therefore, we
+     * can find T3 by: T3 = T1 * T2^{-1}.
+     */
+    tf::StampedTransform t2_inv;
+    try {
+        sub_tf->lookupTransform(msg.child_frame_id, base_frame_id, ros::Time(0), t2_inv);
+    } catch (tf::TransformException const &e) {
+        ROS_WARN("%s", e.what());
+        return;
+    }
+
+    tf::Vector3 const z_bt_raw(z_raw[0], z_raw[1], 0);
+    tf::Vector3 const z_bt = t2_inv * z_bt_raw;
+    Eigen::Vector2d const z = (Eigen::Vector2d() << z_bt[0], z_bt[1]).finished();
+    // TODO: Transform the covariance matrix using the rotation matrix.
+    Eigen::Matrix2d const cov = cov_raw;
 
     if (!offset_tf) {
         tf::Vector3 const pos_offset(z[0], z[1], 0.0);

@@ -6,9 +6,10 @@
     <license>BSD</license>
     <url>https://github.com/mkoval/robot_kf</url>
     <rosdep name="eigen"/>
-    <depend package="geometry_msgs"/>
     <depend package="roscpp"/>
+    <depend package="rospy"/>
     <depend package="nav_msgs"/>
+    <depend package="geometry_msgs"/>
     <depend package="sensor_msgs"/>
     <depend package="tf"/>
     <depend package="tf_conversions"/>

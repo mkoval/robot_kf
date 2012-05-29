@@ -32,15 +32,34 @@ Matrix3d KalmanFilter::getCovariance(void) const
 
 void KalmanFilter::update_encoders(Vector2d enc, Matrix2d cov_enc, double separation)
 {
-    Matrix<double, 3, 2> const B = (Matrix<double, 3, 2>() <<
-        0.5 * cos(x_[2]),  0.5 * cos(x_[2]),
-        0.5 * sin(x_[2]),  0.5 * sin(x_[2]),
-        -1.0 / separation, 1.0 / separation
-    ).finished();
-    // TODO: Verify that this is correct.
-    Matrix3d const cov_process = B * cov_enc * B.transpose();
+    /* This is non-linear in theta because of the x and y elements:
+     *      x = (r + l)/2 * cos(theta + (r - l) / (2s))
+     *      y = (r + l)/2 * sin(theta + (r - l) / (2s))
+     *  theta = (r - l)/(2s)
+     * We can linearize this around the current state estimate using the
+     * Jacobians A = Jac(f, x) and W = Jac(f, u).
+     */
+    double const dlinear = (enc[1] + enc[0]) / 2;
+    double const dtheta  = (enc[1] - enc[0]) / separation;
+    double const theta_halfway = x_[2] + dtheta / 2;
 
-    predict(enc, cov_process, A_, B);
+    Matrix3d const A = (Matrix3d() <<
+        0, 0, -dlinear * sin(theta_halfway),
+        0, 0, +dlinear * cos(theta_halfway),
+        0, 0, 0).finished();
+    Matrix<double, 3, 2> const W = (Matrix<double, 3, 2>() <<
+        +dlinear * sin(theta_halfway) + 0.5 * cos(theta_halfway),
+        -dlinear * sin(theta_halfway) + 0.5 * cos(theta_halfway),
+        -dlinear * cos(theta_halfway) + 0.5 * sin(theta_halfway),
+        +dlinear * cos(theta_halfway) + 0.5 * sin(theta_halfway),
+        -1.0 / separation,
+        +1.0 / separation).finished();
+
+    x_ += (Vector3d() <<
+            dlinear * cos(theta_halfway),
+            dlinear * sin(theta_halfway),
+            dtheta).finished();
+    cov_x_ = A * cov_x_ * A.transpose() + W * cov_enc * W.transpose();
     normalize_yaw();
 }
 

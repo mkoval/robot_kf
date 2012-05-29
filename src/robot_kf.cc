@@ -5,6 +5,8 @@
 #include <angles/angles.h>
 #include <robot_kf/robot_kf.h>
 
+#include <iostream>
+
 using namespace Eigen;
 
 namespace robot_kf {
@@ -44,9 +46,9 @@ void KalmanFilter::update_encoders(Vector2d enc, Matrix2d cov_enc, double separa
     double const theta_halfway = x_[2] + dtheta / 2;
 
     Matrix3d const A = (Matrix3d() <<
-        0, 0, -dlinear * sin(theta_halfway),
-        0, 0, +dlinear * cos(theta_halfway),
-        0, 0, 0).finished();
+        1, 0, -dlinear * sin(theta_halfway),
+        0, 1, +dlinear * cos(theta_halfway),
+        0, 0, 1).finished();
     Matrix<double, 3, 2> const W = (Matrix<double, 3, 2>() <<
         +dlinear * sin(theta_halfway) + 0.5 * cos(theta_halfway),
         -dlinear * sin(theta_halfway) + 0.5 * cos(theta_halfway),

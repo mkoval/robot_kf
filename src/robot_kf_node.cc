@@ -11,6 +11,10 @@
 #include <sensor_msgs/Imu.h>
 #include <robot_kf/robot_kf.h>
 
+using Eigen::Vector3d;
+using Eigen::Matrix3d;
+typedef Eigen::Matrix<double, 6, 6> Matrix6d;
+
 static double const big = 99999.0;
 
 static boost::shared_ptr<tf::TransformListener> sub_tf;
@@ -26,7 +30,8 @@ static boost::shared_ptr<tf::Transform> offset_tf;
 
 static void publish(ros::Time stamp)
 {
-    Eigen::Vector3d const state = kf.getState();
+    Vector3d const state = kf.getState();
+    Matrix3d const cov = kf.getCovariance();
 
     // Wrap the fused state estimate in a ROS message.
     geometry_msgs::PoseStamped fused_base;
@@ -78,8 +83,13 @@ static void publish(ros::Time stamp)
     msg.header.frame_id = global_frame_id;
     msg.child_frame_id = base_frame_id;
     msg.pose.pose =  fused_base.pose;
-    // TODO: Propagate the covariance forward.
-    msg.pose.covariance[0] = -1;
+
+    // Use the covariance estimated by the filter.
+    Eigen::Map<Matrix6d> cov_out(&msg.pose.covariance.front());
+    cov_out.topLeftCorner<2, 2>() = cov.topLeftCorner<2, 2>();
+    cov_out(5, 5) = cov(2, 2);
+
+    // TODO: Estimate the covariance of the encoders.
     msg.twist.twist = velocity;
     msg.twist.covariance[0] = -1;
     pub_fused.publish(msg);

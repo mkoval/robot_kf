@@ -97,7 +97,7 @@ class OdometryCalibrator:
 
                 # Integrate the wheel odometry to estimate the change in pose.
                 linear  = (rr * odom[i_odom, 1] + rl * odom[i_odom, 0]) / 2
-                angular = (rr * odom[i_odom, 1] - rl * odom[i_odom, 0]) / s
+                angular = (rr * odom[i_odom, 1] - rl * odom[i_odom, 0]) * s
                 odom_gps += np.array([ linear * math.cos(odom_gps[2] + angular / 2),
                                        linear * math.sin(odom_gps[2] + angular / 2),
                                        angular ])
@@ -111,7 +111,7 @@ class OdometryCalibrator:
 
         # TODO: Restrict the parameters to be positive.
         params = scipy.optimize.fmin_slsqp(objective, guess, iprint=2)
-        print params
+        return np.array([ params[0], params[1], 1.0 / params[2] ])
 
     @classmethod
     def _get_odom_pose(cls, msg):
@@ -142,9 +142,12 @@ def main():
     calibrator.setup('wheel_odom', 'gps', 'compass')
 
     rospy.spin()
+    guess_diameter = rospy.param('~diameter', 0.1)
+    guess_separation = rospy.param('~separation', 1.0)
+    weight = rospy.param('~weight', 5.0)
 
-    guess = np.array([ 1.0, 1.0, 2.0 ])
-    calibrator.optimize(guess, 5.0)
+    guess = np.array([ diameter, diameter, 1.0 / guess_separation ])
+    calibrator.optimize(guess, weight)
 
 if __name__ == '__main__':
     main()

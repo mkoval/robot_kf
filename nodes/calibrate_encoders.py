@@ -98,11 +98,11 @@ class OdometryCalibrator:
                 # Integrate the wheel odometry to estimate the change in pose.
                 linear  = (rr * odom[i_odom, 1] + rl * odom[i_odom, 0]) / 2
                 angular = (rr * odom[i_odom, 1] - rl * odom[i_odom, 0]) / s
-                odom_gps += np.array([ linear * math.cos(odom_gps[2]),
-                                       linear * math.sin(odom_gps[2]),
+                odom_gps += np.array([ linear * math.cos(odom_gps[2] + angular / 2),
+                                       linear * math.sin(odom_gps[2] + angular / 2),
                                        angular ])
-                odom_compass += np.array([ linear * math.cos(odom_compass[2]),
-                                           linear * math.sin(odom_compass[2]),
+                odom_compass += np.array([ linear * math.cos(odom_compass[2] + angular / 2),
+                                           linear * math.sin(odom_compass[2] + angular / 2),
                                            angular ])
 
             error_gps /= len(gps_linear)

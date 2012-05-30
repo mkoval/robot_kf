@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-from __future__ import print_function
 import roslib; roslib.load_manifest('robot_kf')
 import rospy
 import math
@@ -17,7 +16,7 @@ def callback(odom):
     pos = np.array([ odom.pose.pose.position.x, odom.pose.pose.position.y ])
     time = odom.header.stamp
 
-    if prev_pos:
+    if prev_pos != None:
         distance = np.linalg.norm(pos - prev_pos, 2)
         timestep = (time - prev_time).to_sec()
         velocity = distance / timestep

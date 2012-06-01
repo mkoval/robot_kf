@@ -9,7 +9,7 @@ from geometry_msgs.msg import Point32
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import PointCloud
 
-num_samples = 100
+num_samples = 1000
 
 def callback(odom):
     position = odom.pose.pose.position

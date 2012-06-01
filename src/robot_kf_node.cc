@@ -28,6 +28,9 @@ static geometry_msgs::Twist velocity;
 static std::string global_frame_id, odom_frame_id, base_frame_id, offset_frame_id;
 static boost::shared_ptr<tf::Transform> offset_tf;
 
+static ros::Time prev_odom_time;
+static ros::Time prev_compass_time;
+
 static void publish(ros::Time stamp)
 {
     Vector3d const state = kf.getState();
@@ -119,10 +122,27 @@ static void updateEncoders(robot_kf::WheelOdometry const &msg)
         return;
     }
 
-    Eigen::Vector2d const z = (Eigen::Vector2d() <<
+    Eigen::Vector2d const z_raw = (Eigen::Vector2d() <<
         msg.left.movement, msg.right.movement).finished();
-    Eigen::Matrix2d const cov_z = (Eigen::Matrix2d() <<
+    Eigen::Matrix2d const cov_z_raw = (Eigen::Matrix2d() <<
         msg.left.variance, 0.0, 0.0, msg.right.variance).finished();
+
+    // Prevent the encoders from double-counting rotation in conjunction with
+    // the compass.
+    Eigen::Vector2d z;
+    Eigen::Matrix2d cov_z;
+    if (prev_odom_time < prev_compass_time) {
+        ros::Duration const dt_encoders = msg.header.stamp - prev_odom_time;
+        ros::Duration const dt_compass  = prev_odom_time - prev_compass_time;
+        ros::Duration const dt_ignore = dt_encoders - dt_compass;
+        double const ratio = 1.0 - dt_ignore.toSec() / dt_encoders.toSec();
+        z = ratio * z_raw;
+        cov_z = ratio * cov_z_raw;
+    } else {
+        z = z_raw;
+        cov_z = cov_z_raw;
+    }
+    // FIXME: Correct the GPS in the same way.
 
     // Compute velocity using the wheel encoders. Theoretically the GPS and
     // compass could also be used to estimate these velocities, but those

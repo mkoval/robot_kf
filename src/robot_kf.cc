@@ -60,6 +60,7 @@ void KalmanFilter::update_encoders(Vector2d enc, Matrix2d cov_enc, double separa
     x_ += (Vector3d() <<
             dlinear * cos(theta_halfway),
             dlinear * sin(theta_halfway),
+    //        0).finished();
             dtheta).finished();
     cov_x_ = A * cov_x_ * A.transpose() + W * cov_enc * W.transpose();
     normalize_yaw();

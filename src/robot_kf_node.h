@@ -28,7 +28,7 @@ private:
 class GPSUpdateStep : public UpdateStep {
 public:
     GPSUpdateStep(KalmanFilter const &, nav_msgs::Odometry const &msg);
-    virtual void update(KalmanFilter &filter);
+    virtual void update(KalmanFilter &filter) const;
 
 private:
     Eigen::Vector3d z_;
@@ -38,7 +38,7 @@ private:
 class OdometryUpdateStep : public UpdateStep {
 public:
     OdometryUpdateStep(KalmanFilter const &, WheelOdometry const &msg);
-    virtual void update(KalmanFilter &filter);
+    virtual void update(KalmanFilter &filter) const;
 
 private:
     Eigen::Vector2d z_;
@@ -48,17 +48,21 @@ private:
 
 class CorrectedKalmanFilter {
 public:
-    CorrectedKalmanFilter(void);
+    CorrectedKalmanFilter(double seconds, std::string local_frame_id,
+                          std::string global_frame_id);
 
     void odomCallback(WheelOdometry const &msg);
     void gpsCallback(nav_msgs::Odometry const &gps);
     void compassCallback(sensor_msgs::Imu const &msg);
 
-    Eigen::Vector3d gpsToEigen(nav_msgs::Odometry const &msg);
+private:
+    void pruneUpdates(ros::Time stamp);
 
     KalmanFilter kf_;
     ros::Duration max_latency_;
     std::list<UpdateStep::Ptr> queue_;
+    std::string base_frame_id_;
+    std::string global_frame_id_;
 };
 
 };

@@ -25,12 +25,14 @@ static boost::shared_ptr<tf::TransformBroadcaster> pub_tf;
 
 namespace robot_kf {
 
-#if 0
 /*
  * CorrectedKalmanFilter - corrects for compass latency.
  */
-CorrectedKalmanFilter::CorrectedKalmanFilter(double seconds)
+CorrectedKalmanFilter::CorrectedKalmanFilter(double seconds,
+        std::string base_frame_id, std::string global_frame_id)
     : max_latency_(seconds)
+    , base_frame_id_(base_frame_id)
+    , global_frame_id_(global_frame_id)
 {
 }
 
@@ -38,7 +40,7 @@ void CorrectedKalmanFilter::odomCallback(WheelOdometry const &msg)
 {
     if (msg.header.frame_id != base_frame_id_) {
         ROS_ERROR_THROTTLE(10, "Expected odometry to have frame %s, but actually has %s",
-            base_frame_id_.c_str(), msg.header.c_str());
+            base_frame_id_.c_str(), msg.header.frame_id.c_str());
         return;
     }
 
@@ -53,7 +55,7 @@ void CorrectedKalmanFilter::gpsCallback(nav_msgs::Odometry const &msg)
 {
     if (msg.header.frame_id != global_frame_id_) {
         ROS_ERROR_THROTTLE(10, "Expected GPS to have frame %s, but actually has %s.",
-            global_frame_id_.c_str(), msg.header.c_str());
+            global_frame_id_.c_str(), msg.header.frame_id.c_str());
         return;
     }
 
@@ -68,7 +70,7 @@ void CorrectedKalmanFilter::compassCallback(sensor_msgs::Imu const &msg)
 {
     if (msg.header.frame_id != global_frame_id_) {
         ROS_ERROR_THROTTLE(10, "Expected compass to have frame %s, but actually has %s.",
-            global_frame_id_.c_str(), msg.header.c_str());
+            global_frame_id_.c_str(), msg.header.frame_id.c_str());
         return;
     }
 
@@ -76,14 +78,14 @@ void CorrectedKalmanFilter::compassCallback(sensor_msgs::Imu const &msg)
     double const var = msg.orientation_covariance[8];
 
     // Find the first update step that occured after this measurement.
-    std::list<UpdateStep>::iterator it = queue_.end();
-    while (it != queue_.begin() && it->getStamp() > msg.header.stamp) {
-        --gps_it;
+    std::list<UpdateStep::Ptr>::iterator it = queue_.end();
+    while (it != queue_.begin() && (*it)->getStamp() > msg.header.stamp) {
+        --it;
     }
 
     // There aren't any updates to unwind, so we can proceed as normal.
     if (it == queue_.end()) {
-        kf_->update_compass(z, var);
+        kf_.update_compass(z, var);
     }
     // We've hit the end of the queue and still haven't found the first
     // update to unwind. This means the queue wasn't long enough.
@@ -94,24 +96,23 @@ void CorrectedKalmanFilter::compassCallback(sensor_msgs::Imu const &msg)
     // Otherwise, we can unwind the updates, apply the compass update, then
     // replay the unwound updates.
     else {
-        ++gps_it;
-        it->restore(kf_);
-        kf_->update_compass(z, var);
+        ++it;
+        (*it)->restore(kf_);
+        kf_.update_compass(z, var);
 
         for (++it; it != queue_.end(); ++it) {
-            queue_.update(kf_);
+            (*it)->update(kf_);
         }
     }
 }
 
-void CorrectedKalmanFilter::pruneUpdates(void)
+void CorrectedKalmanFilter::pruneUpdates(ros::Time stamp)
 {
-    std::list<UpdateStep>::iterator it = queue_.begin();
-    while (it != queue_.end() && stamp - *it->getStamp() > max_latency_) {
-        it = queue.erase(it);
+    std::list<UpdateStep::Ptr>::iterator it = queue_.begin();
+    while (it != queue_.end() && stamp - (*it)->getStamp() > max_latency_) {
+        it = queue_.erase(it);
     }
 }
-#endif
 
 /*
  * UpdateStep - abstract base class
@@ -154,7 +155,7 @@ GPSUpdateStep::GPSUpdateStep(KalmanFilter const &kf, nav_msgs::Odometry const &m
     cov_ = transform.linear() * cov_offset * transform.linear().transpose();
 }
 
-void GPSUpdateStep::update(KalmanFilter &kf)
+void GPSUpdateStep::update(KalmanFilter &kf) const
 {
     kf.update_gps(z_.head<2>(), cov_.topLeftCorner<2, 2>());
 }
@@ -170,7 +171,7 @@ OdometryUpdateStep::OdometryUpdateStep(KalmanFilter const &kf, WheelOdometry con
     cov_ << msg.left.variance, 0.0, 0.0, msg.right.variance;
 }
 
-void OdometryUpdateStep::update(KalmanFilter &kf)
+void OdometryUpdateStep::update(KalmanFilter &kf) const
 {
     kf.update_encoders(z_, cov_, separation_);
 }

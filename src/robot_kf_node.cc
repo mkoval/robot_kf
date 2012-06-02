@@ -11,6 +11,152 @@
 #include <sensor_msgs/Imu.h>
 #include <robot_kf/robot_kf.h>
 
+using Eigen::Affine3d;
+using Eigen::Map;
+using Eigen::Vector2d;
+using Eigen::Vector3d;
+typedef Eigen::Matrix<double, 6, 6> Matrix6d
+
+struct UpdateStep {
+    virtual ros::Time getStamp(void) const = 0;
+    virtual void update(KalmanFilter &filter) = 0;
+    virtual void restore(KalmanFilter &filter) = 0;
+};
+
+class GPSUpdateStep : public UpdateStep {
+    GPSUpdateStep(nav_msgs::Odometry const &msg);
+    virtual ros::Time getStamp(void) const;
+    virtual void update(KalmanFilter &filter);
+    virtual void restore(KalmanFilter &filter);
+};
+
+class OdometryUpdateStep : public UpdateStep {
+    GPSUpdateStep(WheelOdometry const &msg);
+    virtual ros::Time getStamp(void) const;
+    virtual void update(KalmanFilter &filter);
+    virtual void restore(KalmanFilter &filter);
+};
+
+class CorrectedKalmanFilter {
+public:
+    CorrectedKalmanFilter(void);
+
+    void odomCallback(WheelOdometry const &msg);
+    void gpsCallback(nav_msgs::Odometry const &gps);
+    void compassCallback(sensor_msgs::Imu const &msg);
+
+    Eigen::Vector3d gpsToEigen(nav_msgs::Odometry const &msg);
+
+    KalmanFilter kf_;
+    ros::Duration max_latency_;
+    std::list<UpdateStep> queue_;
+};
+
+CorrectedKalmanFilter::CorrectedKalmanFilter(double seconds)
+    : max_latency_(seconds)
+{
+}
+
+void CorrectedKalmanFilter::odomCallback(WheelOdometry const &msg)
+{
+    Vector2d z;
+    Matrix2d cov;
+    z << msg.left.movement, msg.right.movement;
+    cov << msg.left.variance, 0.0, 0.0, msg.right.variance;
+
+    kf_.update_encoders(z, cov, msg.separation);
+
+    pruneOldMsgs(queue_odom_, msg.header.stamp - max_latency_);
+    queue_odom_.push_back(msg);
+}
+
+void CorrectedKalmanFilter::gpsCallback(nav_msgs::Odometry const &msg)
+{
+    if (msg.header.frame_id != global_frame_id_) {
+        ROS_ERROR_THROTTLE(10, "Expected GPS to have frame %s, but actually has %s.",
+            global_frame_id_.c_str(), msg.header.c_str());
+        return;
+    }
+
+    Vector3 const z_offset = gpsToEigen();
+    Map<Matrix6d> const cov6_offset_raw(&msg.pose.covariance.front());
+    Matrix3d const cov_offset = cov6_offset_raw.topLeftCorner<3, 3>();
+
+    // Transform from the GPS frame to the base frame.
+    tf::StampedTransform t2_inv;
+    try {
+        sub_tf->lookupTransform(msg.child_frame_id, base_frame_id,
+                                msg.header.stamp, t2_inv);
+    } catch (tf::TransformException const &e) {
+        ROS_WARN("%s", e.what());
+        return;
+    }
+    Affine3d transformation;
+    tf::TransformTFToEigen(t2_inv, transformation);
+    Vector3d const z = t2_inv * z_offset;
+    Matrix3d const cov = t2_inv.linear() * z * t2_inv.linear().transpose();
+
+    // Update the KF.
+    kf_.update_gps(z.head<2>(), z.topLeftCorner<2, 2>());
+
+    pruneOldMsgs(queue_gps_, msg.header.stamp - max_latency_);
+    queue_gps_.push_back(msg);
+}
+
+void CorrectedKalmanFilter::gpsToEigen(nav_msgs::Odometry const &msg)
+{
+    geometry_msgs::Point3 const &position = msg.pose.pose.position;
+    return (Vector2() << position.x, position.y);
+}
+
+void CorrectedKalmanFilter::compassCallback(sensor_msgs::Imu const &msg)
+{
+    if (msg.header.frame_id != global_frame_id_) {
+        ROS_ERROR_THROTTLE(10, "Expected compass to have frame %s, but actually has %s.",
+            global_frame_id_.c_str(), msg.header.c_str());
+        return;
+    }
+
+    double const z = tf::getYaw(msg.orientation);
+    double const var = msg.orientation_covariance[8];
+
+    // Find the update step that occured just before this measurement.
+    std::list<UpdateStep>::iterator it = queue_.end();
+    while (it != queue_.begin() && it->getStamp() > msg.header.stamp) {
+        --gps_it;
+    }
+
+    // If we hit the end of the queue, this means that the sample exceeds
+    // the maximum latency.
+    if (it == queue_.begin() && !queue_.empty()) {
+        ROS_WARN_THROTTLE(10, "Skipping compass update that exceeds maximum latency");
+        return;
+    }
+    // Restore the Kalman filter to that state, if necessary. Then apply this
+    // measurement as usual.
+    else if (it != queue_.end()) {
+        it->restore(kf_);
+    }
+    kf_->update_compass(z, var);
+
+    // Replay the updates that we unrolled in sequential order.
+    for (++it; it != queue_.end(); ++it) {
+        queue_.update(kf_);
+    }
+}
+
+void CorrectedKalmanFilter::pruneUpdates(void)
+{
+    std::list<UpdateStep>::iterator it = queue_.begin();
+    while (it != queue_.end() && stamp - it->getStamp() > max_latency_) {
+        it = queue.erase(it);
+    }
+}
+
+
+
+
+
 using Eigen::Vector3d;
 using Eigen::Matrix3d;
 typedef Eigen::Matrix<double, 6, 6> Matrix6d;

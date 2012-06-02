@@ -10,6 +10,7 @@ public:
     KalmanFilter(void);
     virtual ~KalmanFilter(void);
 
+    void setState(Eigen::Vector3d mean, Eigen::Matrix3d cov);
     Eigen::Vector3d getState(void) const;
     Eigen::Matrix3d getCovariance(void) const;
 

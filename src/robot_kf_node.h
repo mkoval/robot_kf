@@ -10,21 +10,6 @@
 
 namespace robot_kf {
 
-class CorrectedKalmanFilter {
-public:
-    CorrectedKalmanFilter(void);
-
-    void odomCallback(WheelOdometry const &msg);
-    void gpsCallback(nav_msgs::Odometry const &gps);
-    void compassCallback(sensor_msgs::Imu const &msg);
-
-    Eigen::Vector3d gpsToEigen(nav_msgs::Odometry const &msg);
-
-    KalmanFilter kf_;
-    ros::Duration max_latency_;
-    std::list<UpdateStep::Ptr> queue_;
-};
-
 class UpdateStep {
 public:
     typedef boost::shared_ptr<UpdateStep> Ptr;
@@ -42,7 +27,7 @@ private:
 
 class GPSUpdateStep : public UpdateStep {
 public:
-    GPSUpdateStep(nav_msgs::Odometry const &msg);
+    GPSUpdateStep(KalmanFilter const &, nav_msgs::Odometry const &msg);
     virtual void update(KalmanFilter &filter);
 
 private:
@@ -52,13 +37,28 @@ private:
 
 class OdometryUpdateStep : public UpdateStep {
 public:
-    OdometryUpdateStep(WheelOdometry const &msg);
+    OdometryUpdateStep(KalmanFilter const &, WheelOdometry const &msg);
     virtual void update(KalmanFilter &filter);
 
 private:
     Eigen::Vector2d z_;
     Eigen::Matrix2d cov_;
     double separation_;
+};
+
+class CorrectedKalmanFilter {
+public:
+    CorrectedKalmanFilter(void);
+
+    void odomCallback(WheelOdometry const &msg);
+    void gpsCallback(nav_msgs::Odometry const &gps);
+    void compassCallback(sensor_msgs::Imu const &msg);
+
+    Eigen::Vector3d gpsToEigen(nav_msgs::Odometry const &msg);
+
+    KalmanFilter kf_;
+    ros::Duration max_latency_;
+    std::list<UpdateStep::Ptr> queue_;
 };
 
 };

@@ -22,6 +22,12 @@ KalmanFilter::KalmanFilter(void)
 KalmanFilter::~KalmanFilter(void)
 {}
 
+void KalmanFilter::setState(Eigen::Vector3d mean, Eigen::Matrix3d cov)
+{
+    x_ = mean;
+    cov_x_ = cov;
+}
+
 Vector3d KalmanFilter::getState(void) const
 {
     return x_;

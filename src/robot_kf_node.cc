@@ -5,20 +5,27 @@
 #include <tf/transform_listener.h>
 #include <tf/transform_broadcaster.h>
 #include <tf_conversions/tf_eigen.h>
-#include <geometry_msgs/QuaternionStamped.h>
+#include <robot_kf/robot_kf.h>
 #include <robot_kf/WheelOdometry.h>
 #include <nav_msgs/Odometry.h>
 #include <sensor_msgs/Imu.h>
-#include <robot_kf/robot_kf.h>
+#include "robot_kf_node.h"
 
 using Eigen::Affine3d;
 using Eigen::Map;
+using Eigen::Matrix3d;
 using Eigen::Vector2d;
 using Eigen::Vector3d;
-typedef Eigen::Matrix<double, 6, 6> Matrix6d
+typedef Eigen::Matrix<double, 6, 6> Matrix6d;
+
+static std::string base_frame_id;
+static std::string global_frame_id;
+static boost::shared_ptr<tf::TransformListener> sub_tf;
+static boost::shared_ptr<tf::TransformBroadcaster> pub_tf;
 
 namespace robot_kf {
 
+#if 0
 /*
  * CorrectedKalmanFilter - corrects for compass latency.
  */
@@ -104,6 +111,7 @@ void CorrectedKalmanFilter::pruneUpdates(void)
         it = queue.erase(it);
     }
 }
+#endif
 
 /*
  * UpdateStep - abstract base class
@@ -130,8 +138,9 @@ void UpdateStep::restore(KalmanFilter &kf) const
 GPSUpdateStep::GPSUpdateStep(KalmanFilter const &kf, nav_msgs::Odometry const &msg)
     : UpdateStep(kf, msg.header.stamp)
 {
-    Vector3 const z_offset = gpsToEigen();
-    Map<Matrix6d> const cov6_offset_raw(&msg.pose.covariance.front());
+    geometry_msgs::Point const &pos = msg.pose.pose.position;
+    Vector3d const z_offset = (Vector3d() << pos.x, pos.y, pos.z).finished();
+    Map<Matrix6d const> const cov6_offset_raw(&msg.pose.covariance.front());
     Matrix3d const cov_offset = cov6_offset_raw.topLeftCorner<3, 3>();
 
     // Transform from the GPS frame to the base frame.
@@ -139,15 +148,15 @@ GPSUpdateStep::GPSUpdateStep(KalmanFilter const &kf, nav_msgs::Odometry const &m
     tf::StampedTransform t2_inv;
     sub_tf->lookupTransform(msg.child_frame_id, base_frame_id,
                             msg.header.stamp, t2_inv);
-    Affine3d transformation;
-    tf::TransformTFToEigen(t2_inv, transformation);
-    z_ = t2_inv * z_offset;
-    cov_ = t2_inv.linear() * z * t2_inv.linear().transpose();
+    Affine3d transform;
+    tf::TransformTFToEigen(t2_inv, transform);
+    z_ = transform * z_offset;
+    cov_ = transform.linear() * cov_offset * transform.linear().transpose();
 }
 
 void GPSUpdateStep::update(KalmanFilter &kf)
 {
-    kf.gps_update(z_.head<2>(), cov_.topLeftCorner<2, 2>());
+    kf.update_gps(z_.head<2>(), cov_.topLeftCorner<2, 2>());
 }
 
 /*

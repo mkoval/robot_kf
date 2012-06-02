@@ -62,6 +62,8 @@ void CorrectedKalmanFilter::odomCallback(WheelOdometry const &msg)
     double const omega = (msg.right.movement - msg.left.movement) / (msg.separation * dt);
     publish(msg.header.stamp, kf_.getState(), kf_.getCovariance(), vel, omega);
 
+    // TODO: Use the same unrolling behavior as the compass.
+
     pruneUpdates(msg.header.stamp);
 }
 
@@ -98,6 +100,8 @@ void CorrectedKalmanFilter::gpsCallback(nav_msgs::Odometry const &msg)
     queue_.push_back(action);
     action->update(kf_);
     pruneUpdates(stamp);
+
+    // TODO: Use the same unrolling behavior as the compass.
 
     // Seed the offset frame with the first GPS coordinate.
     if (!tf_offset_) {
@@ -204,6 +208,7 @@ void CorrectedKalmanFilter::publish(ros::Time stamp, Vector3d state, Matrix3d co
     // TODO: Include the covariance.
     odom.twist.twist.linear.x = velocity;
     odom.twist.twist.angular.z = omega;
+    odom.twist.covariance[0] = -1;
 
     pub_fused_.publish(odom);
 }

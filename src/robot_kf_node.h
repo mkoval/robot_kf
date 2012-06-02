@@ -48,8 +48,12 @@ private:
 
 class CorrectedKalmanFilter {
 public:
-    CorrectedKalmanFilter(double seconds, std::string local_frame_id,
-                          std::string global_frame_id);
+    CorrectedKalmanFilter(double seconds,
+        std::string local_frame_id,
+        std::string odom_frame_id,
+        std::string global_frame_id);
+    void init(std::string topic_odom, std::string topic_gps,
+              std::string topic_compass, std::string topic_fused);
 
     void odomCallback(WheelOdometry const &msg);
     void gpsCallback(nav_msgs::Odometry const &gps);
@@ -61,8 +65,18 @@ private:
     KalmanFilter kf_;
     ros::Duration max_latency_;
     std::list<UpdateStep::Ptr> queue_;
+
     std::string base_frame_id_;
+    std::string odom_frame_id_;
     std::string global_frame_id_;
+
+    ros::NodeHandle nh_;
+    ros::Subscriber sub_odom_;
+    ros::Subscriber sub_gps_;
+    ros::Subscriber sub_compass_;
+    ros::Publisher pub_fused_;
+    tf::TransformListener sub_tf;
+    tf::TransformBroadcaster pub_tf;
 };
 
 };

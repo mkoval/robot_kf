@@ -18,22 +18,30 @@ using Eigen::Vector2d;
 using Eigen::Vector3d;
 typedef Eigen::Matrix<double, 6, 6> Matrix6d;
 
-static std::string base_frame_id;
-static std::string global_frame_id;
-static boost::shared_ptr<tf::TransformListener> sub_tf;
-static boost::shared_ptr<tf::TransformBroadcaster> pub_tf;
-
 namespace robot_kf {
 
 /*
  * CorrectedKalmanFilter - corrects for compass latency.
  */
-CorrectedKalmanFilter::CorrectedKalmanFilter(double seconds,
-        std::string base_frame_id, std::string global_frame_id)
+CorrectedKalmanFilter::CorrectedKalmanFilter(
+        double seconds,
+        std::string base_frame_id,
+        std::string odom_frame_id,
+        std::string global_frame_id)
     : max_latency_(seconds)
     , base_frame_id_(base_frame_id)
+    , odom_frame_id_(odom_frame_id)
     , global_frame_id_(global_frame_id)
 {
+}
+
+void CorrectedKalmanFilter::init(std::string topic_odom, std::string topic_gps,
+                                 std::string topic_compass, std::string topic_fused)
+{
+    sub_odom_ = nh_.subscribe<WheelOdometry>(topic_odom, 10, boost::bind(&CorrectedKalmanFilter::odomCallback, this));
+    //sub_gps_ = nh_.subscribe(topic_gps, 1, boost::bind(&CorrectedKalmanFilter::gpsCallback, this));
+    //sub_compass_ = nh_.subscribe(topic_compass, 1, boost::bind(&CorrectedKalmanFilter::compassCallback, this));
+    pub_fused_ = nh_.advertise<nav_msgs::Odometry>(topic_fused, 10);
 }
 
 void CorrectedKalmanFilter::odomCallback(WheelOdometry const &msg)
@@ -145,7 +153,7 @@ GPSUpdateStep::GPSUpdateStep(KalmanFilter const &kf, nav_msgs::Odometry const &m
     // Transform from the GPS frame to the base frame.
     // FIXME: This could throw a tf::TransformException.
     tf::StampedTransform t2_inv;
-    sub_tf->lookupTransform(msg.child_frame_id, base_frame_id,
+    sub_tf.lookupTransform(msg.child_frame_id, base_frame_id,
                             msg.header.stamp, t2_inv);
     Affine3d transform;
     tf::TransformTFToEigen(t2_inv, transform);
@@ -180,6 +188,15 @@ int main(int argc, char **argv)
 {
     ros::init(argc, argv, "robot_kf_node");
 
+    ros::NodeHandle nh_node("~");
+    nh_node.param<std::string>("global_frame_id", global_frame_id, "/map");
+    nh_node.param<std::string>("odom_frame_id", odom_frame_id, "/odom");
+    nh_node.param<std::string>("base_frame_id", base_frame_id, "/base_footprint");
+    nh_node.param<std::string>("offset_frame_id", offset_frame_id, "/map_offset");
+
+    robot_kf::CorrectedKalmanFilter kf(base_frame_id, odom_frame_id, global_frame_id);
+    kf.init("wheel_odom", "gps", "compass");
+
 #if 0
     // Initialize the skeleton twist message.
     velocity.linear.y = 0;
@@ -187,11 +204,6 @@ int main(int argc, char **argv)
     velocity.angular.x = 0;
     velocity.angular.y = 0;
 
-    ros::NodeHandle nh, nh_node("~");
-    nh_node.param<std::string>("global_frame_id", global_frame_id, "/map");
-    nh_node.param<std::string>("odom_frame_id", odom_frame_id, "/odom");
-    nh_node.param<std::string>("base_frame_id", base_frame_id, "/base_footprint");
-    nh_node.param<std::string>("offset_frame_id", offset_frame_id, "/map_offset");
 
     sub_tf = boost::make_shared<tf::TransformListener>();
     pub_tf = boost::make_shared<tf::TransformBroadcaster>();

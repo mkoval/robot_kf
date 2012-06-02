@@ -27,7 +27,8 @@ private:
 
 class GPSUpdateStep : public UpdateStep {
 public:
-    GPSUpdateStep(KalmanFilter const &, nav_msgs::Odometry const &msg);
+    GPSUpdateStep(KalmanFilter const &, ros::Time stamp,
+                  Eigen::Vector3d z, Eigen::Matrix3d cov);
     virtual void update(KalmanFilter &filter) const;
 
 private:

@@ -17,41 +17,11 @@ using Eigen::Vector2d;
 using Eigen::Vector3d;
 typedef Eigen::Matrix<double, 6, 6> Matrix6d
 
-struct UpdateStep {
-    virtual ros::Time getStamp(void) const = 0;
-    virtual void update(KalmanFilter &filter) = 0;
-    virtual void restore(KalmanFilter &filter) = 0;
-};
+namespace robot_kf {
 
-class GPSUpdateStep : public UpdateStep {
-    GPSUpdateStep(nav_msgs::Odometry const &msg);
-    virtual ros::Time getStamp(void) const;
-    virtual void update(KalmanFilter &filter);
-    virtual void restore(KalmanFilter &filter);
-};
-
-class OdometryUpdateStep : public UpdateStep {
-    GPSUpdateStep(WheelOdometry const &msg);
-    virtual ros::Time getStamp(void) const;
-    virtual void update(KalmanFilter &filter);
-    virtual void restore(KalmanFilter &filter);
-};
-
-class CorrectedKalmanFilter {
-public:
-    CorrectedKalmanFilter(void);
-
-    void odomCallback(WheelOdometry const &msg);
-    void gpsCallback(nav_msgs::Odometry const &gps);
-    void compassCallback(sensor_msgs::Imu const &msg);
-
-    Eigen::Vector3d gpsToEigen(nav_msgs::Odometry const &msg);
-
-    KalmanFilter kf_;
-    ros::Duration max_latency_;
-    std::list<UpdateStep> queue_;
-};
-
+/*
+ * CorrectedKalmanFilter - corrects for compass latency.
+ */
 CorrectedKalmanFilter::CorrectedKalmanFilter(double seconds)
     : max_latency_(seconds)
 {
@@ -59,15 +29,17 @@ CorrectedKalmanFilter::CorrectedKalmanFilter(double seconds)
 
 void CorrectedKalmanFilter::odomCallback(WheelOdometry const &msg)
 {
-    Vector2d z;
-    Matrix2d cov;
-    z << msg.left.movement, msg.right.movement;
-    cov << msg.left.variance, 0.0, 0.0, msg.right.variance;
+    if (msg.header.frame_id != base_frame_id_) {
+        ROS_ERROR_THROTTLE(10, "Expected odometry to have frame %s, but actually has %s",
+            base_frame_id_.c_str(), msg.header.c_str());
+        return;
+    }
 
-    kf_.update_encoders(z, cov, msg.separation);
+    UpdateStep::Ptr action = boost::make_shared<OdometryUpdateStep>(kf_, msg);
+    queue_.push_back(action);
+    action->update(kf_);
 
-    pruneOldMsgs(queue_odom_, msg.header.stamp - max_latency_);
-    queue_odom_.push_back(msg);
+    // TODO: Prune old updates from the queue.
 }
 
 void CorrectedKalmanFilter::gpsCallback(nav_msgs::Odometry const &msg)
@@ -78,35 +50,11 @@ void CorrectedKalmanFilter::gpsCallback(nav_msgs::Odometry const &msg)
         return;
     }
 
-    Vector3 const z_offset = gpsToEigen();
-    Map<Matrix6d> const cov6_offset_raw(&msg.pose.covariance.front());
-    Matrix3d const cov_offset = cov6_offset_raw.topLeftCorner<3, 3>();
+    UpdateStep::Ptr action = boost::make_shared<GPSUpdateStep>(kf_, msg);
+    queue_.push_back(action);
+    action->update(kf_);
 
-    // Transform from the GPS frame to the base frame.
-    tf::StampedTransform t2_inv;
-    try {
-        sub_tf->lookupTransform(msg.child_frame_id, base_frame_id,
-                                msg.header.stamp, t2_inv);
-    } catch (tf::TransformException const &e) {
-        ROS_WARN("%s", e.what());
-        return;
-    }
-    Affine3d transformation;
-    tf::TransformTFToEigen(t2_inv, transformation);
-    Vector3d const z = t2_inv * z_offset;
-    Matrix3d const cov = t2_inv.linear() * z * t2_inv.linear().transpose();
-
-    // Update the KF.
-    kf_.update_gps(z.head<2>(), z.topLeftCorner<2, 2>());
-
-    pruneOldMsgs(queue_gps_, msg.header.stamp - max_latency_);
-    queue_gps_.push_back(msg);
-}
-
-void CorrectedKalmanFilter::gpsToEigen(nav_msgs::Odometry const &msg)
-{
-    geometry_msgs::Point3 const &position = msg.pose.pose.position;
-    return (Vector2() << position.x, position.y);
+    // TODO: Prune old updates from the queue.
 }
 
 void CorrectedKalmanFilter::compassCallback(sensor_msgs::Imu const &msg)
@@ -120,244 +68,111 @@ void CorrectedKalmanFilter::compassCallback(sensor_msgs::Imu const &msg)
     double const z = tf::getYaw(msg.orientation);
     double const var = msg.orientation_covariance[8];
 
-    // Find the update step that occured just before this measurement.
+    // Find the first update step that occured after this measurement.
     std::list<UpdateStep>::iterator it = queue_.end();
     while (it != queue_.begin() && it->getStamp() > msg.header.stamp) {
         --gps_it;
     }
 
-    // If we hit the end of the queue, this means that the sample exceeds
-    // the maximum latency.
-    if (it == queue_.begin() && !queue_.empty()) {
+    // There aren't any updates to unwind, so we can proceed as normal.
+    if (it == queue_.end()) {
+        kf_->update_compass(z, var);
+    }
+    // We've hit the end of the queue and still haven't found the first
+    // update to unwind. This means the queue wasn't long enough.
+    else if (it == queue_.begin()) {
         ROS_WARN_THROTTLE(10, "Skipping compass update that exceeds maximum latency");
         return;
     }
-    // Restore the Kalman filter to that state, if necessary. Then apply this
-    // measurement as usual.
-    else if (it != queue_.end()) {
+    // Otherwise, we can unwind the updates, apply the compass update, then
+    // replay the unwound updates.
+    else {
+        ++gps_it;
         it->restore(kf_);
-    }
-    kf_->update_compass(z, var);
+        kf_->update_compass(z, var);
 
-    // Replay the updates that we unrolled in sequential order.
-    for (++it; it != queue_.end(); ++it) {
-        queue_.update(kf_);
+        for (++it; it != queue_.end(); ++it) {
+            queue_.update(kf_);
+        }
     }
 }
 
 void CorrectedKalmanFilter::pruneUpdates(void)
 {
     std::list<UpdateStep>::iterator it = queue_.begin();
-    while (it != queue_.end() && stamp - it->getStamp() > max_latency_) {
+    while (it != queue_.end() && stamp - *it->getStamp() > max_latency_) {
         it = queue.erase(it);
     }
 }
 
+/*
+ * UpdateStep - abstract base class
+ */
+UpdateStep::UpdateStep(KalmanFilter const &kf, ros::Time stamp)
+    : stamp_(stamp)
+    , x_(kf.getState())
+    , cov_(kf.getCovariance())
+{}
 
-
-
-
-using Eigen::Vector3d;
-using Eigen::Matrix3d;
-typedef Eigen::Matrix<double, 6, 6> Matrix6d;
-
-static double const big = 99999.0;
-
-static boost::shared_ptr<tf::TransformListener> sub_tf;
-static boost::shared_ptr<tf::TransformBroadcaster> pub_tf;
-static ros::Subscriber sub_compass, sub_encoders, sub_gps;
-static ros::Publisher pub_fused;
-
-static robot_kf::KalmanFilter kf;
-static geometry_msgs::Twist velocity;
-
-static std::string global_frame_id, odom_frame_id, base_frame_id, offset_frame_id;
-static boost::shared_ptr<tf::Transform> offset_tf;
-
-static ros::Time prev_odom_time;
-static ros::Time prev_compass_time;
-
-static void publish(ros::Time stamp)
+ros::Time UpdateStep::getStamp(void) const
 {
-    Vector3d const state = kf.getState();
-    Matrix3d const cov = kf.getCovariance();
-
-    // Wrap the fused state estimate in a ROS message.
-    geometry_msgs::PoseStamped fused_base;
-    fused_base.header.stamp    = stamp;
-    fused_base.header.frame_id = odom_frame_id;
-    fused_base.pose.position.x = state[0];
-    fused_base.pose.position.y = state[1];
-    fused_base.pose.position.z = 0.0;
-    fused_base.pose.orientation = tf::createQuaternionMsgFromYaw(state[2]);
-
-    /*
-     * We actually want to publish the /map to /base_footprint transform, but
-     * this would cause /base_footprint to have two parents. Instead, we need
-     * to publish the /map to /odom transform. See this chart:
-     *
-     * /map --[T1]--> /odom --[T2]--> /base_footprint
-     * /map ----------[T3]----------> /base_footprint
-     *
-     * The output of the Kalman filter is T3, but we want T1. We find T1 by
-     * computing T1 = T3 * inv(T2), where T2 is provided by the odometry
-     * source.
-     */
-    tf::Vector3 const pos(state[0], state[1], 0);
-    tf::Quaternion const ori = tf::createQuaternionFromYaw(state[2]);
-    tf::Transform t3(ori, pos);
-
-    tf::StampedTransform t2;
-    try {
-        sub_tf->waitForTransform(odom_frame_id, base_frame_id, stamp, ros::Duration(1.0));
-        sub_tf->lookupTransform(odom_frame_id, base_frame_id, stamp, t2);
-    } catch (tf::TransformException const &e) {
-        ROS_WARN("%s", e.what());
-        return;
-    }
-
-    tf::Transform const t1 = t3 * t2.inverse();
-    tf::StampedTransform transform(t1, stamp, global_frame_id, odom_frame_id);
-    pub_tf->sendTransform(transform);
-
-    // Relative frame to fix RViz numerical stability issues.
-    if (offset_tf) {
-        tf::StampedTransform offset_stamped(*offset_tf, stamp, global_frame_id, offset_frame_id);
-        pub_tf->sendTransform(offset_stamped);
-    }
-    
-    // Publish the odometry message.
-    nav_msgs::Odometry msg;
-    msg.header.stamp = stamp;
-    msg.header.frame_id = global_frame_id;
-    msg.child_frame_id = base_frame_id;
-    msg.pose.pose =  fused_base.pose;
-
-    // Use the covariance estimated by the filter.
-    Eigen::Map<Matrix6d> cov_out(&msg.pose.covariance.front());
-    cov_out.topLeftCorner<2, 2>() = cov.topLeftCorner<2, 2>();
-    cov_out(5, 5) = cov(2, 2);
-
-    // TODO: Estimate the covariance of the encoders.
-    msg.twist.twist = velocity;
-    msg.twist.covariance[0] = -1;
-    pub_fused.publish(msg);
+    return stamp_;
 }
 
-static void updateCompass(sensor_msgs::Imu const &msg)
+void UpdateStep::restore(KalmanFilter &kf) const
 {
-    if (msg.header.frame_id != base_frame_id) {
-        ROS_ERROR_THROTTLE(10, "Imu message must have frame_id '%s'",
-                           base_frame_id.c_str());
-        return;
-    }
-
-    double const yaw = tf::getYaw(msg.orientation);
-    Eigen::Map<Eigen::Matrix3d const> cov_raw(&msg.orientation_covariance.front());
-
-    kf.update_compass(yaw, cov_raw(2, 2));
+    kf.setState(x_, cov_);
 }
 
-static void updateEncoders(robot_kf::WheelOdometry const &msg)
+/*
+ * GPSUpdateStep - concrete implementation of UpdateStep
+ */
+GPSUpdateStep::GPSUpdateStep(KalmanFilter const &kf, nav_msgs::Odometry const &msg)
+    : UpdateStep(kf, msg.header.stamp)
 {
-    if (msg.header.frame_id != base_frame_id) {
-        ROS_ERROR_THROTTLE(10, "WheelOdometry message must have frame_id '%s'", base_frame_id.c_str());
-        return;
-    } else if (msg.separation <= 0) {
-        ROS_ERROR_THROTTLE(10, "Wheel separation in WheelOdometry message must be positive.");
-        return;
-    }
+    Vector3 const z_offset = gpsToEigen();
+    Map<Matrix6d> const cov6_offset_raw(&msg.pose.covariance.front());
+    Matrix3d const cov_offset = cov6_offset_raw.topLeftCorner<3, 3>();
 
-    Eigen::Vector2d const z_raw = (Eigen::Vector2d() <<
-        msg.left.movement, msg.right.movement).finished();
-    Eigen::Matrix2d const cov_z_raw = (Eigen::Matrix2d() <<
-        msg.left.variance, 0.0, 0.0, msg.right.variance).finished();
-
-    // Prevent the encoders from double-counting rotation in conjunction with
-    // the compass.
-    Eigen::Vector2d z;
-    Eigen::Matrix2d cov_z;
-    if (prev_odom_time < prev_compass_time) {
-        ros::Duration const dt_encoders = msg.header.stamp - prev_odom_time;
-        ros::Duration const dt_compass  = prev_odom_time - prev_compass_time;
-        ros::Duration const dt_ignore = dt_encoders - dt_compass;
-        double const ratio = 1.0 - dt_ignore.toSec() / dt_encoders.toSec();
-        z = ratio * z_raw;
-        cov_z = ratio * cov_z_raw;
-    } else {
-        z = z_raw;
-        cov_z = cov_z_raw;
-    }
-    // FIXME: Correct the GPS in the same way.
-
-    // Compute velocity using the wheel encoders. Theoretically the GPS and
-    // compass could also be used to estimate these velocities, but those
-    // estimates are too noisy to justify the complexity of adding two more
-    // state variables.
-    double const movement_linear = (z[1] + z[0]) / 2;
-    double const movement_angular = (z[1] - z[0]) / msg.separation;
-    double const delta_time = msg.timestep.toSec();
-    velocity.linear.x = movement_linear / delta_time;
-    velocity.angular.z = movement_angular / delta_time;
-
-    kf.update_encoders(z, cov_z, msg.separation);
-    publish(msg.header.stamp);
-}
-
-static void updateGps(nav_msgs::Odometry const &msg)
-{
-    if (msg.header.frame_id != global_frame_id) {
-        ROS_ERROR_THROTTLE(10, "GPS message must have frame_id '%s'",
-                           global_frame_id.c_str());
-        return;
-    }
-
-    Eigen::Vector2d const z_raw = (Eigen::Vector2d() <<
-        msg.pose.pose.position.x, msg.pose.pose.position.y).finished();
-    Eigen::Map<Eigen::Matrix<double, 6, 6> const> cov6_raw(
-        &msg.pose.covariance.front()
-    );
-    Eigen::Matrix2d const cov_raw = cov6_raw.topLeftCorner<2, 2>();
-
-    /* The GPS gives a position relative to child_frame_id, which is located at
-     * the center of the GPS antennna. However, the Kalman filter only manipulates
-     * quantities in base_frame_id. So the situation is:
-     *
-     *     /map --[ T1 ]--> /gps <--[ T2 ]-- /base_footprint
-     *     /map -----------[ T3 ]----------> /base_footprint
-     *
-     * Transformation T1 is provided by the GPS, T2 is a static transformation
-     * provided by the URDF, and T3 is the desired translation. Therefore, we
-     * can find T3 by: T3 = T1 * T2^{-1}.
-     */
+    // Transform from the GPS frame to the base frame.
+    // FIXME: This could throw a tf::TransformException.
     tf::StampedTransform t2_inv;
-    try {
-        sub_tf->lookupTransform(msg.child_frame_id, base_frame_id, ros::Time(0), t2_inv);
-    } catch (tf::TransformException const &e) {
-        ROS_WARN("%s", e.what());
-        return;
-    }
-
-    tf::Vector3 const z_bt_raw(z_raw[0], z_raw[1], 0);
-    tf::Vector3 const z_bt = t2_inv * z_bt_raw;
-    Eigen::Vector2d const z = (Eigen::Vector2d() << z_bt[0], z_bt[1]).finished();
-    // TODO: Transform the covariance matrix using the rotation matrix.
-    Eigen::Matrix2d const cov = cov_raw;
-
-    if (!offset_tf) {
-        tf::Vector3 const pos_offset(z[0], z[1], 0.0);
-        tf::Quaternion const ori_offset(0.0, 0.0, 0.0, 1.0);
-        offset_tf = boost::make_shared<tf::Transform>(ori_offset, pos_offset);
-        ROS_INFO("Initialized %s to (%f, %f)", offset_frame_id.c_str(), z[0], z[1]);
-    }
-
-    kf.update_gps(z, cov);
+    sub_tf->lookupTransform(msg.child_frame_id, base_frame_id,
+                            msg.header.stamp, t2_inv);
+    Affine3d transformation;
+    tf::TransformTFToEigen(t2_inv, transformation);
+    z_ = t2_inv * z_offset;
+    cov_ = t2_inv.linear() * z * t2_inv.linear().transpose();
 }
+
+void GPSUpdateStep::update(KalmanFilter &kf)
+{
+    kf.gps_update(z_.head<2>(), cov_.topLeftCorner<2, 2>());
+}
+
+/*
+ * OdometryUpdateStep - concrete implementation of UpdateStep
+ */
+OdometryUpdateStep::OdometryUpdateStep(KalmanFilter const &kf, WheelOdometry const &msg)
+    : UpdateStep(kf, msg.header.stamp)
+    , separation_(msg.separation)
+{
+    z_ << msg.left.movement, msg.right.movement;
+    cov_ << msg.left.variance, 0.0, 0.0, msg.right.variance;
+}
+
+void OdometryUpdateStep::update(KalmanFilter &kf)
+{
+    kf.update_encoders(z_, cov_, separation_);
+}
+
+};
 
 int main(int argc, char **argv)
 {
     ros::init(argc, argv, "robot_kf_node");
 
+#if 0
     // Initialize the skeleton twist message.
     velocity.linear.y = 0;
     velocity.linear.z = 0;
@@ -376,6 +191,7 @@ int main(int argc, char **argv)
     sub_encoders = nh.subscribe("wheel_odom", 1, &updateEncoders);
     sub_gps      = nh.subscribe("gps", 1, &updateGps);
     pub_fused    = nh.advertise<nav_msgs::Odometry>("odom_fused", 100);
+#endif
 
     ros::spin();
     return 0;

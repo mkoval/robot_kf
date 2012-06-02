@@ -60,6 +60,8 @@ public:
     void gpsCallback(nav_msgs::Odometry const &gps);
     void compassCallback(sensor_msgs::Imu const &msg);
 
+    void publish(ros::Time stamp, Eigen::Vector3d state, Eigen::Matrix3d cov);
+
 private:
     void pruneUpdates(ros::Time stamp);
 

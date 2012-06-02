@@ -55,6 +55,8 @@ void CorrectedKalmanFilter::odomCallback(WheelOdometry const &msg)
     UpdateStep::Ptr action = boost::make_shared<OdometryUpdateStep>(kf_, msg);
     queue_.push_back(action);
     action->update(kf_);
+    publish(msg.header.stamp, kf_.getState(), kf_.getCovariance());
+
     pruneUpdates(msg.header.stamp);
 }
 
@@ -131,6 +133,54 @@ void CorrectedKalmanFilter::compassCallback(sensor_msgs::Imu const &msg)
             (*it)->update(kf_);
         }
     }
+}
+
+void CorrectedKalmanFilter::publish(ros::Time stamp, Vector3d state, Matrix3d cov)
+{
+    /*
+     * We actually want to publish the /map to /base_footprint transform, but
+     * this would cause /base_footprint to have two parents. Instead, we need
+     * to publish the /map to /odom transform. See this chart:
+     *
+     * /map --[T1]--> /odom --[T2]--> /base_footprint
+     * /map ----------[T3]----------> /base_footprint
+     *
+     * The output of the Kalman filter is T3, but we want T1. We find T1 by
+     * computing T1 = T3 * inv(T2), where T2 is provided by the odometry
+     * source.
+     */
+    tf::Vector3 const pos(state[0], state[1], 0);
+    tf::Quaternion const ori = tf::createQuaternionFromYaw(state[2]);
+    tf::Transform t3(ori, pos);
+
+    tf::StampedTransform t2;
+    try {
+        sub_tf.waitForTransform(odom_frame_id_, base_frame_id_, stamp, ros::Duration(1.0));
+        sub_tf.lookupTransform(odom_frame_id_, base_frame_id_, stamp, t2);
+    } catch (tf::TransformException const &e) {
+        ROS_WARN("%s", e.what());
+        return;
+    }
+
+    tf::Transform const t1 = t3 * t2.inverse();
+    tf::StampedTransform transform(t1, stamp, global_frame_id_, odom_frame_id_);
+    pub_tf.sendTransform(transform);
+
+    // Publish an odometry message for use by the navigation stack.
+    nav_msgs::Odometry odom;
+    odom.header.stamp = stamp;
+    odom.header.frame_id = global_frame_id_;
+    odom.pose.pose.position.x = state[0];
+    odom.pose.pose.position.y = state[1];
+    odom.pose.pose.orientation = tf::createQuaternionMsgFromYaw(state[2]);
+    
+    // Include the covariance matrix for debugging/visualization purposes.
+    Eigen::Map<Matrix6d> cov_out(&odom.pose.covariance.front());
+    cov_out.topLeftCorner<2, 2>() = cov.topLeftCorner<2, 2>();
+    cov_out(5, 5) = cov(2, 2);
+
+    // TODO: Include velocity from the last odometry update.
+    pub_fused_.publish(odom);
 }
 
 void CorrectedKalmanFilter::pruneUpdates(ros::Time stamp)

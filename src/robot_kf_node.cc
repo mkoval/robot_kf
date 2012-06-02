@@ -38,12 +38,10 @@ CorrectedKalmanFilter::CorrectedKalmanFilter(
 void CorrectedKalmanFilter::init(std::string topic_odom, std::string topic_gps,
                                  std::string topic_compass, std::string topic_fused)
 {
-#if 0
-    sub_odom_ = nh_.subscribe<WheelOdometry>(topic_odom, 10, boost::bind(&CorrectedKalmanFilter::odomCallback, this));
-    sub_gps_ = nh_.subscribe(topic_gps, 1, boost::bind(&CorrectedKalmanFilter::gpsCallback, this));
-    sub_compass_ = nh_.subscribe(topic_compass, 1, boost::bind(&CorrectedKalmanFilter::compassCallback, this));
+    sub_odom_ = nh_.subscribe(topic_odom, 10, &CorrectedKalmanFilter::odomCallback, this);
+    sub_gps_ = nh_.subscribe(topic_gps, 1, &CorrectedKalmanFilter::gpsCallback, this);
+    sub_compass_ = nh_.subscribe(topic_compass, 1, &CorrectedKalmanFilter::compassCallback, this);
     pub_fused_ = nh_.advertise<nav_msgs::Odometry>(topic_fused, 10);
-#endif
 }
 
 void CorrectedKalmanFilter::odomCallback(WheelOdometry const &msg)

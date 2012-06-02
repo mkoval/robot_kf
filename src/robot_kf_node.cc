@@ -27,7 +27,8 @@ CorrectedKalmanFilter::CorrectedKalmanFilter(
         double seconds,
         std::string base_frame_id,
         std::string odom_frame_id,
-        std::string global_frame_id)
+        std::string global_frame_id,
+        std::string offset_frame_id)
     : max_latency_(seconds)
     , base_frame_id_(base_frame_id)
     , odom_frame_id_(odom_frame_id)
@@ -85,14 +86,21 @@ void CorrectedKalmanFilter::gpsCallback(nav_msgs::Odometry const &msg)
 
     Affine3d transform;
     tf::TransformTFToEigen(t2_inv, transform);
-    Vector3d z = transform * z_offset;
-    Matrix3d cov = transform.linear() * cov_offset * transform.linear().transpose();
+    Vector3d const z = transform * z_offset;
+    Matrix3d const cov = transform.linear() * cov_offset * transform.linear().transpose();
 
     ros::Time stamp = msg.header.stamp;
     UpdateStep::Ptr action = boost::make_shared<GPSUpdateStep>(kf_, stamp, z, cov);
     queue_.push_back(action);
     action->update(kf_);
     pruneUpdates(stamp);
+
+    // Seed the offset frame with the first GPS coordinate.
+    if (!tf_offset_) {
+        tf::Vector3 const offset_pos(z[0], z[1], 0);
+        tf::Quaternion const offset_ori(0, 0, 0, 1);
+        tf_offset_ = tf::Transform(offset_ori, offset_pos);
+    }
 }
 
 void CorrectedKalmanFilter::compassCallback(sensor_msgs::Imu const &msg)
@@ -165,6 +173,14 @@ void CorrectedKalmanFilter::publish(ros::Time stamp, Vector3d state, Matrix3d co
     tf::Transform const t1 = t3 * t2.inverse();
     tf::StampedTransform transform(t1, stamp, global_frame_id_, odom_frame_id_);
     pub_tf.sendTransform(transform);
+
+    // Publish a static offset for visualization purposes. This is necessary
+    // because RViz internally uses 32-bit floats and has numerical stability
+    // issues when dealing with UTM coordinates.
+    if (tf_offset_) {
+        tf::StampedTransform offset(*tf_offset_, stamp, global_frame_id_, offset_frame_id_);
+        pub_tf.sendTransform(offset);
+    }
 
     // Publish an odometry message for use by the navigation stack.
     nav_msgs::Odometry odom;
@@ -257,7 +273,9 @@ int main(int argc, char **argv)
     nh_node.param<std::string>("offset_frame_id", offset_frame_id, "/map_offset");
     nh_node.param<double>("max_latency", max_latency, 1.0);
 
-    robot_kf::CorrectedKalmanFilter kf(max_latency, base_frame_id, odom_frame_id, global_frame_id);
+    robot_kf::CorrectedKalmanFilter kf(max_latency,
+        base_frame_id, odom_frame_id,
+        global_frame_id, offset_frame_id);
     kf.init("wheel_odom", "gps", "compass", "odom_fused");
 
 #if 0

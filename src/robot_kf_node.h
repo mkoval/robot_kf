@@ -52,7 +52,8 @@ public:
     CorrectedKalmanFilter(double seconds,
         std::string local_frame_id,
         std::string odom_frame_id,
-        std::string global_frame_id);
+        std::string global_frame_id,
+        std::string offset_frame_id);
     void init(std::string topic_odom, std::string topic_gps,
               std::string topic_compass, std::string topic_fused);
 
@@ -72,6 +73,9 @@ private:
     std::string base_frame_id_;
     std::string odom_frame_id_;
     std::string global_frame_id_;
+    std::string offset_frame_id_;
+
+    boost::optional<tf::Transform> tf_offset_;
 
     ros::NodeHandle nh_;
     ros::Subscriber sub_odom_;

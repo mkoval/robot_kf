@@ -47,8 +47,7 @@ void CorrectedKalmanFilter::odomCallback(WheelOdometry const &msg)
     UpdateStep::Ptr action = boost::make_shared<OdometryUpdateStep>(kf_, msg);
     queue_.push_back(action);
     action->update(kf_);
-
-    // TODO: Prune old updates from the queue.
+    pruneUpdates(msg.header.stamp);
 }
 
 void CorrectedKalmanFilter::gpsCallback(nav_msgs::Odometry const &msg)
@@ -62,8 +61,7 @@ void CorrectedKalmanFilter::gpsCallback(nav_msgs::Odometry const &msg)
     UpdateStep::Ptr action = boost::make_shared<GPSUpdateStep>(kf_, msg);
     queue_.push_back(action);
     action->update(kf_);
-
-    // TODO: Prune old updates from the queue.
+    pruneUpdates(msg.header.stamp);
 }
 
 void CorrectedKalmanFilter::compassCallback(sensor_msgs::Imu const &msg)

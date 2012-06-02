@@ -56,7 +56,11 @@ void CorrectedKalmanFilter::odomCallback(WheelOdometry const &msg)
     UpdateStep::Ptr action = boost::make_shared<OdometryUpdateStep>(kf_, msg);
     queue_.push_back(action);
     action->update(kf_);
-    publish(msg.header.stamp, kf_.getState(), kf_.getCovariance());
+
+    double const dt = msg.timestep.toSec();
+    double const vel = (msg.right.movement + msg.left.movement) / (2 * dt);
+    double const omega = (msg.right.movement - msg.left.movement) / (msg.separation * dt);
+    publish(msg.header.stamp, kf_.getState(), kf_.getCovariance(), vel, omega);
 
     pruneUpdates(msg.header.stamp);
 }
@@ -143,7 +147,8 @@ void CorrectedKalmanFilter::compassCallback(sensor_msgs::Imu const &msg)
     }
 }
 
-void CorrectedKalmanFilter::publish(ros::Time stamp, Vector3d state, Matrix3d cov)
+void CorrectedKalmanFilter::publish(ros::Time stamp, Vector3d state, Matrix3d cov,
+                                    double velocity, double omega)
 {
     /*
      * We actually want to publish the /map to /base_footprint transform, but
@@ -195,7 +200,11 @@ void CorrectedKalmanFilter::publish(ros::Time stamp, Vector3d state, Matrix3d co
     cov_out.topLeftCorner<2, 2>() = cov.topLeftCorner<2, 2>();
     cov_out(5, 5) = cov(2, 2);
 
-    // TODO: Include velocity from the last odometry update.
+    // Republish the velocity measured by the last odometry update.
+    // TODO: Include the covariance.
+    odom.twist.twist.linear.x = velocity;
+    odom.twist.twist.angular.z = omega;
+
     pub_fused_.publish(odom);
 }
 

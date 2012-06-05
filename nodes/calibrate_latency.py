@@ -32,7 +32,7 @@ class CompassCalibrator:
             if self.ready == 2 and abs(delta) > self.target and not self.end_odom:
                 self.end_odom = msg.header.stamp
                 rospy.loginfo("Done collecting odometry samples.")
-        else:
+        elif not self.initial_odom:
             rospy.loginfo('Initialized odometry.')
             self.initial_odom = curr_odom
             self.ready += 1
